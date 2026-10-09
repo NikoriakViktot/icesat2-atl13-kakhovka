@@ -49,6 +49,8 @@ fi
 COMPOSE_FN='compose() {
   f="-f docker-compose.yml -f docker-compose.prod.yml"
   grep -q "^EXTERNAL_DB_NETWORK=." .env && f="$f -f docker-compose.external-db.yml"
+  grep -q "^S3_BACKEND=aws" .env && f="$f -f docker-compose.aws-s3.yml"
+  grep -q "^BFF_NETWORK=." .env && f="$f -f docker-compose.bff-network.yml"
   p=""; grep -q "^CONTAINER_DATABASE_URL=." .env || p="--profile localdb"
   docker compose $f $p "$@"
 }'

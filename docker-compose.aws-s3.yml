@@ -1,0 +1,28 @@
+# AWS S3 instead of the bundled SeaweedFS (docs/deployment.md "Using AWS S3"):
+#   S3_BACKEND=aws, S3_BUCKET=<bucket>, AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_DEFAULT_REGION in .env,
+#   and no AWS_ENDPOINT_URL there. scripts/deploy_server.sh adds this file when S3_BACKEND=aws.
+# s3 / s3-init move to a profile nobody enables; the containers lose the SeaweedFS endpoint.
+x-env: &env
+  DATABASE_URL: ${CONTAINER_DATABASE_URL:-postgresql://icesat2:${POSTGRES_PASSWORD:-icesat2}@db:5432/icesat2}
+  REDIS_URL: redis://redis:6379/0
+  PROJ_NETWORK: "ON"
+  PROJ_USER_WRITABLE_DIRECTORY: /tmp/icesat2-cache/proj
+
+services:
+  s3: {profiles: [seaweedfs]}
+  s3-init: {profiles: [seaweedfs]}
+  migrate:
+    environment: !override
+      <<: *env
+  api:
+    environment: !override
+      <<: *env
+    depends_on: !override
+      db: {condition: service_healthy, required: false}
+      redis: {condition: service_started}
+  worker:
+    environment: !override
+      <<: *env
+    depends_on: !override
+      db: {condition: service_healthy, required: false}
+      redis: {condition: service_started}

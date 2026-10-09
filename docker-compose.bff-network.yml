@@ -1,0 +1,15 @@
+# Let a BFF on another Compose stack reach the API by name (e.g. Django on geohydroai.org):
+#   BFF_NETWORK=geoai_web   -> the API joins it as `icesat2-api`, so the BFF uses http://icesat2-api:8000
+# scripts/deploy_server.sh adds this file when BFF_NETWORK is set. Only the API joins; the
+# worker, Redis and the database stay off that network.
+services:
+  api:
+    networks:
+      default: {}
+      bff:
+        aliases: [icesat2-api]
+
+networks:
+  bff:
+    external: true
+    name: ${BFF_NETWORK:?set BFF_NETWORK to the Docker network of the BFF}
