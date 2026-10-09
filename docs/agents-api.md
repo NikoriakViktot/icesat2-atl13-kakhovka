@@ -2,8 +2,12 @@
 
 This service pulls ICESat-2 data for **any area on Earth**, processes it, and serves
 the results. You describe *what* you want (product, area, dates, options); the
-service handles NASA access, storage and processing. Machine-readable contract:
-[`docs/openapi.json`](openapi.json) (also live at `GET /openapi.json`, UI at `/docs`).
+service handles NASA access, storage and processing.
+
+- Machine-readable contract: [`openapi.json`](openapi.json) (live: `GET /openapi.json`, UI `/docs`).
+- Ready-made tool definitions: [`agent-tools.json`](agent-tools.json) (JSON Schema + HTTP mapping).
+- Task recipes with sanity checks: [`agent-playbooks.md`](agent-playbooks.md).
+- Column meanings in depth: [`data-model.md`](data-model.md), [`heights-and-dems.md`](heights-and-dems.md).
 
 - **Products:** `ATL13` inland water surface, `ATL08` terrain + canopy, `ATL03` photons.
 - **Digital elevation models:** compare ICESat-2 against Copernicus GLO-30 (`cop30`)

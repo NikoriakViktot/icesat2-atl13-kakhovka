@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import zipfile
 from pathlib import Path
 
@@ -99,7 +100,7 @@ class TileSource:
         if data is None:
             self.missing.add(tile)
             return None
-        tmp = local.with_suffix(".part")
+        tmp = local.with_suffix(f".{os.getpid()}.part")   # several workers share the cache
         tmp.write_bytes(data)
         tmp.rename(local)
         if self.s3_prefix:

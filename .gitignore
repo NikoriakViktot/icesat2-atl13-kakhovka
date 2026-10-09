@@ -295,3 +295,6 @@ notebooks/_donor/*.ipynb
 # Regenerated from the canonical Kherson seed list — not tracked.
 config/resources_manifest_downstream.csv
 config/resources_manifest_downstream_*.csv
+
+# Server-generated S3 credentials (scripts/deploy_server.sh)
+docker/*.local.json

@@ -1,8 +1,12 @@
 # AGENTS.md — working on this repository
 
 Instructions for AI coding agents (Claude Code, Codex, Cursor, …) and humans
-changing the code. If you need to **call** the running service, read
-[`docs/agents-api.md`](docs/agents-api.md) instead.
+changing the code. Repository: `github.com/NikoriakViktot/icesat2-ingest` (renamed
+from `icesat2-atl13-kakhovka`; the Python package keeps the name
+`kakhovka_altimetry` so scripts and notebooks keep working). To **call** the running
+service, read [`docs/agents-api.md`](docs/agents-api.md) and
+[`docs/agent-playbooks.md`](docs/agent-playbooks.md) instead. Full docs index:
+[`docs/README.md`](docs/README.md).
 
 ## What this repo is
 
@@ -36,7 +40,11 @@ src/kakhovka_altimetry/
     settings.py    env-driven Settings
 migrations/        Alembic (0001 base schema, 0002 multi-product)
 tests/             pytest; test_service_integration.py needs docker
-docs/              agents-api.md (API guide), openapi.json (generated)
+docs/              architecture, data-model, heights-and-dems, deployment, operations,
+                   agents-api, agent-playbooks; openapi.json + agent-tools.json (generated)
+scripts/export_agent_docs.py   regenerates docs/openapi.json + docs/agent-tools.json
+scripts/deploy_server.sh       SSH deploy / update of the prod stack (or `local`)
+docker-compose.prod.yml        prod overrides: 127.0.0.1 ports, restarts, 2 workers
 ```
 
 ## Commands
@@ -56,9 +64,12 @@ docker compose up -d                                         # db, s3, redis, ap
 docker compose run --rm migrate                              # alembic upgrade head
 # API http://localhost:58000/docs ; Postgres :55433 ; S3 :58333 ; Redis :56379
 
-# regenerate the OpenAPI contract after changing api.py
-.venv-service/bin/python -c "import json; from kakhovka_altimetry.service.api import app; \
-  json.dump(app.openapi(), open('docs/openapi.json','w'), indent=2)"
+# regenerate docs/openapi.json + docs/agent-tools.json after changing api.py
+# (tests/test_docs_in_sync.py fails while they are stale)
+.venv-service/bin/python scripts/export_agent_docs.py
+
+# deploy to a server (docs/deployment.md)
+scripts/deploy_server.sh user@host [--egg /path/egg_2015.tif]
 ```
 
 The legacy `.venv` in the repo was copied from another machine and does not run.
@@ -123,8 +134,9 @@ Use `.venv-service`.
 2. If its points go to PostGIS: a migration with a partitioned
    `icesat2.<product>_segments` table, keyed on `(region, beam, time)`, plus a
    column mapping in `repository.POINT_TABLES`.
-3. Extend `ProductName` in `api.py`; regenerate `docs/openapi.json`; document the
-   product in `docs/agents-api.md`.
+3. Extend `ProductName` in `api.py` (and the enums in
+   `scripts/export_agent_docs.py`); run `scripts/export_agent_docs.py`; document the
+   product in `docs/agents-api.md`, `docs/data-model.md` and `docs/agent-playbooks.md`.
 4. Tests: a `fake_<product>()` frame in `tests/test_pipeline_steps.py` and a job in
    `tests/test_service_integration.py`; then a small live job against the stack.
 
@@ -133,6 +145,7 @@ Use `.venv-service`.
 - `ruff check` clean and the full `pytest` green, including the docker integration test.
 - Schema change: a new Alembic revision (never edit an applied one), applied to the
   live stack with `--profile tools build` + `run --rm migrate`.
-- API change: regenerate `docs/openapi.json` and update `docs/agents-api.md`.
+- API change: `scripts/export_agent_docs.py`, then update `docs/agents-api.md` and,
+  if the workflow changed, `docs/agent-playbooks.md`.
 - Anything touching heights or DEMs: run one small live job and sanity-check
   `dem_comparison` (bias of a few dm, not tens of metres).

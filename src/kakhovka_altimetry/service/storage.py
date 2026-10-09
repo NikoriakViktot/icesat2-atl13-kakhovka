@@ -16,6 +16,7 @@ from S3 without hitting SlideRule again.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import fsspec
@@ -86,7 +87,7 @@ def fetch_to_cache(uri: str, cache_dir: Path) -> Path:
     local = cache_dir / uri.rstrip("/").rsplit("/", 1)[-1]
     if not local.exists():
         fs, path = fsspec.core.url_to_fs(uri)
-        tmp = local.with_suffix(local.suffix + ".part")
+        tmp = local.with_suffix(f"{local.suffix}.{os.getpid()}.part")  # several workers
         fs.get(path, str(tmp))
         tmp.rename(local)
     return local

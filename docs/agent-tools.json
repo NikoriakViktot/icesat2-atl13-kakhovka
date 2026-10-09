@@ -1,0 +1,793 @@
+{
+  "info": "Tool definitions for the ICESat-2 ingest API. Every call needs header X-API-Key. Guide: docs/agents-api.md, recipes: docs/agent-playbooks.md.",
+  "auth": {
+    "type": "header",
+    "name": "X-API-Key"
+  },
+  "tools": [
+    {
+      "name": "list_products",
+      "description": "List the ICESat-2 products this service can ingest (ATL13 inland water, ATL08 terrain + canopy, ATL03 photons), their raster variables and the reference DEMs. Call once per session.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "http": {
+        "method": "GET",
+        "path": "/products"
+      }
+    },
+    {
+      "name": "list_regions",
+      "description": "List configured and registered regions with their row counts.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "http": {
+        "method": "GET",
+        "path": "/regions"
+      }
+    },
+    {
+      "name": "register_region",
+      "description": "Register (or update) an area of interest by slug. bbox or GeoJSON polygon is required; coord (a point ON the water) is required for ATL13. vertical: egm2008 anywhere, egg2015 only in Europe.",
+      "input_schema": {
+        "$defs": {
+          "Coord": {
+            "properties": {
+              "lon": {
+                "maximum": 180,
+                "minimum": -180,
+                "title": "Lon",
+                "type": "number"
+              },
+              "lat": {
+                "maximum": 90,
+                "minimum": -90,
+                "title": "Lat",
+                "type": "number"
+              }
+            },
+            "required": [
+              "lon",
+              "lat"
+            ],
+            "title": "Coord",
+            "type": "object"
+          }
+        },
+        "description": "Any area of interest. ``coord`` is required only for ATL13 (a point on the water).",
+        "properties": {
+          "slug": {
+            "description": "unique id, [a-z0-9_]",
+            "pattern": "^[a-z0-9_]{2,64}$",
+            "title": "Slug",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Name"
+          },
+          "coord": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Coord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "ATL13: a point on the water body"
+          },
+          "refid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "ATL13 reference water body id",
+            "title": "Refid"
+          },
+          "kind": {
+            "default": "lake",
+            "description": "ATL13 QC: still water (lake/reservoir) or river",
+            "enum": [
+              "lake",
+              "reservoir",
+              "river"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "vertical": {
+            "default": "egm2008",
+            "description": "egm2008: global; egg2015: Europe only (EVRS)",
+            "enum": [
+              "egm2008",
+              "egg2015"
+            ],
+            "title": "Vertical",
+            "type": "string"
+          },
+          "bbox": {
+            "anyOf": [
+              {
+                "maxItems": 4,
+                "minItems": 4,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "lon_min, lat_min, lon_max, lat_max (EPSG:4326)",
+            "title": "Bbox"
+          },
+          "polygon": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "GeoJSON geometry",
+            "title": "Polygon"
+          }
+        },
+        "required": [
+          "slug"
+        ],
+        "title": "RegionIn",
+        "type": "object"
+      },
+      "http": {
+        "method": "POST",
+        "path": "/regions",
+        "body": "input"
+      }
+    },
+    {
+      "name": "create_job",
+      "description": "Queue an asynchronous ingest job and return its job_id. Always set start/end; use limit for a first look. Then poll get_job until status is 'done' or 'failed'. Re-submitting is safe: loaded granules are skipped.",
+      "input_schema": {
+        "$defs": {
+          "Atl03Options": {
+            "properties": {
+              "cnf": {
+                "default": 4,
+                "description": "minimum ATL03 signal confidence",
+                "maximum": 4,
+                "minimum": 0,
+                "title": "Cnf",
+                "type": "integer"
+              },
+              "atl08_class": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "keep only these ATL08 photon classes: ['atl08_noise', 'atl08_ground', 'atl08_canopy', 'atl08_top_of_canopy', 'atl08_unclassified']",
+                "title": "Atl08 Class"
+              }
+            },
+            "title": "Atl03Options",
+            "type": "object"
+          },
+          "Coord": {
+            "properties": {
+              "lon": {
+                "maximum": 180,
+                "minimum": -180,
+                "title": "Lon",
+                "type": "number"
+              },
+              "lat": {
+                "maximum": 90,
+                "minimum": -90,
+                "title": "Lat",
+                "type": "number"
+              }
+            },
+            "required": [
+              "lon",
+              "lat"
+            ],
+            "title": "Coord",
+            "type": "object"
+          },
+          "DemOptions": {
+            "properties": {
+              "resolution_m": {
+                "default": 100,
+                "maximum": 10000,
+                "minimum": 10,
+                "title": "Resolution M",
+                "type": "number"
+              },
+              "variables": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "ATL08: dtm, chm; ATL03: dtm; ATL13: wse. Default: all",
+                "title": "Variables"
+              }
+            },
+            "title": "DemOptions",
+            "type": "object"
+          },
+          "RegionIn": {
+            "description": "Any area of interest. ``coord`` is required only for ATL13 (a point on the water).",
+            "properties": {
+              "slug": {
+                "description": "unique id, [a-z0-9_]",
+                "pattern": "^[a-z0-9_]{2,64}$",
+                "title": "Slug",
+                "type": "string"
+              },
+              "name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Name"
+              },
+              "coord": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/Coord"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "ATL13: a point on the water body"
+              },
+              "refid": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "ATL13 reference water body id",
+                "title": "Refid"
+              },
+              "kind": {
+                "default": "lake",
+                "description": "ATL13 QC: still water (lake/reservoir) or river",
+                "enum": [
+                  "lake",
+                  "reservoir",
+                  "river"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "vertical": {
+                "default": "egm2008",
+                "description": "egm2008: global; egg2015: Europe only (EVRS)",
+                "enum": [
+                  "egm2008",
+                  "egg2015"
+                ],
+                "title": "Vertical",
+                "type": "string"
+              },
+              "bbox": {
+                "anyOf": [
+                  {
+                    "maxItems": 4,
+                    "minItems": 4,
+                    "prefixItems": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ],
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "lon_min, lat_min, lon_max, lat_max (EPSG:4326)",
+                "title": "Bbox"
+              },
+              "polygon": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "GeoJSON geometry",
+                "title": "Polygon"
+              }
+            },
+            "required": [
+              "slug"
+            ],
+            "title": "RegionIn",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "product": {
+            "default": "ATL13",
+            "enum": [
+              "ATL13",
+              "ATL08",
+              "ATL03"
+            ],
+            "title": "Product",
+            "type": "string"
+          },
+          "region_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "a configured/registered region",
+            "title": "Region Slug"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RegionIn"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "or an ad-hoc region (registered)"
+          },
+          "start": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Start"
+          },
+          "end": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End"
+          },
+          "include_cmr": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "search CMR for granules; default: yes unless the region has a curated ATL13 seed list",
+            "title": "Include Cmr"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "max granules this job",
+            "title": "Limit"
+          },
+          "batch_size": {
+            "anyOf": [
+              {
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Batch Size"
+          },
+          "compare": {
+            "description": "reference DEMs to compare ICESat-2 against",
+            "items": {
+              "enum": [
+                "cop30",
+                "fabdem"
+              ],
+              "type": "string"
+            },
+            "title": "Compare",
+            "type": "array"
+          },
+          "dem": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/DemOptions"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "grid points into COG rasters"
+          },
+          "atl03": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Atl03Options"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "title": "JobIn",
+        "type": "object"
+      },
+      "http": {
+        "method": "POST",
+        "path": "/jobs",
+        "body": "input"
+      }
+    },
+    {
+      "name": "get_job",
+      "description": "Job status (queued|running|done|failed), stage (discover|acquire|process|load), stats (counts, dem_comparison, rasters) and error. Poll every 5-10 s at first, then every 30 s.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "additionalProperties": false
+      },
+      "http": {
+        "method": "GET",
+        "path": "/jobs/{job_id}"
+      }
+    },
+    {
+      "name": "list_jobs",
+      "description": "Recent jobs, newest first, optionally filtered.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{2,64}$",
+            "description": "region slug"
+          },
+          "product": {
+            "type": "string",
+            "enum": [
+              "ATL13",
+              "ATL08",
+              "ATL03"
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "http": {
+        "method": "GET",
+        "path": "/jobs",
+        "query": "input"
+      }
+    },
+    {
+      "name": "get_pass_levels",
+      "description": "ATL13 water levels, one per (date, rgt, beam): median_wse_m in the region's vertical_datum, nmad_m, n_points, qc_pass. Use qc_pass=true and format=csv for a time series.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{2,64}$",
+            "description": "region slug"
+          },
+          "start": {
+            "type": "string",
+            "format": "date",
+            "description": "YYYY-MM-DD, inclusive"
+          },
+          "end": {
+            "type": "string",
+            "format": "date",
+            "description": "YYYY-MM-DD, inclusive"
+          },
+          "qc_pass": {
+            "type": "boolean"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "geojson",
+              "csv"
+            ]
+          }
+        },
+        "required": [
+          "slug"
+        ],
+        "additionalProperties": false
+      },
+      "http": {
+        "method": "GET",
+        "path": "/regions/{slug}/pass-levels",
+        "query": "rest"
+      }
+    },
+    {
+      "name": "get_points",
+      "description": "ATL13 or ATL08 point rows (heights: ellipsoidal, h_m/wse_m in the region datum, h_egm2008_m, cop30_m/fabdem_m when compared). ATL03 photons are not served here.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{2,64}$",
+            "description": "region slug"
+          },
+          "product": {
+            "type": "string",
+            "enum": [
+              "ATL13",
+              "ATL08"
+            ]
+          },
+          "start": {
+            "type": "string",
+            "format": "date",
+            "description": "YYYY-MM-DD, inclusive"
+          },
+          "end": {
+            "type": "string",
+            "format": "date",
+            "description": "YYYY-MM-DD, inclusive"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "csv",
+              "json"
+            ]
+          }
+        },
+        "required": [
+          "slug"
+        ],
+        "additionalProperties": false
+      },
+      "http": {
+        "method": "GET",
+        "path": "/regions/{slug}/points",
+        "query": "rest"
+      }
+    },
+    {
+      "name": "get_dem_comparisons",
+      "description": "ICESat-2 minus reference DEM (cop30, fabdem) statistics in EGM2008: median_m = bias, nmad_m = robust spread.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "region": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{2,64}$",
+            "description": "region slug"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "http": {
+        "method": "GET",
+        "path": "/dem-comparisons",
+        "query": "input"
+      }
+    },
+    {
+      "name": "list_rasters",
+      "description": "ICESat-2 gridded rasters (dtm, chm, wse): resolution, UTM crs, vertical_datum, stats, footprint. Download a COG with GET /rasters/{raster_id}/download (band 1 value, band 2 count).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{2,64}$",
+            "description": "region slug"
+          },
+          "product": {
+            "type": "string",
+            "enum": [
+              "ATL13",
+              "ATL08",
+              "ATL03"
+            ]
+          },
+          "variable": {
+            "type": "string",
+            "enum": [
+              "dtm",
+              "chm",
+              "wse"
+            ]
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "http": {
+        "method": "GET",
+        "path": "/rasters",
+        "query": "input"
+      }
+    },
+    {
+      "name": "list_granules",
+      "description": "Per-granule status (pending|fetched|empty|loaded) for a region.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{2,64}$",
+            "description": "region slug"
+          },
+          "product": {
+            "type": "string",
+            "enum": [
+              "ATL13",
+              "ATL08",
+              "ATL03"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "fetched",
+              "empty",
+              "loaded"
+            ]
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "http": {
+        "method": "GET",
+        "path": "/granules",
+        "query": "input"
+      }
+    }
+  ]
+}

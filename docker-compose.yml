@@ -26,7 +26,7 @@ services:
     ports: ["58333:8333"]
     volumes:
       - s3data:/data
-      - ./docker/seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
+      - ${SEAWEED_S3_CONFIG:-./docker/seaweedfs-s3.json}:/etc/seaweedfs/s3.json:ro
 
   s3-init:
     build: .

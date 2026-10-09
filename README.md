@@ -1,4 +1,6 @@
-# icesat2-atl13-kakhovka
+# icesat2-ingest
+
+*(formerly `icesat2-atl13-kakhovka`; old links redirect)*
 
 Two things live here, on one shared library (`src/kakhovka_altimetry/`):
 
@@ -7,7 +9,9 @@ Two things live here, on one shared library (`src/kakhovka_altimetry/`):
    Copernicus GLO-30 and FABDEM; ICESat-2 DTM / canopy / water-surface rasters as
    COGs. Raw and processed data in S3, results in PostGIS, an HTTP API on top.
    → [Ingest service](#ingest-service-any-region-atl13--atl08--atl03--dems) ·
-   [API guide for AI agents](docs/agents-api.md) · [OpenAPI](docs/openapi.json)
+   [documentation](docs/README.md) · [API guide for AI agents](docs/agents-api.md) ·
+   [agent playbooks](docs/agent-playbooks.md) · [agent tools](docs/agent-tools.json) ·
+   [OpenAPI](docs/openapi.json) · [deployment](docs/deployment.md)
 2. **The Kakhovka research pipeline** (everything below until the service
    section): ICESat-2 ATL13 → EGG2015 → per-pass water-surface elevation (EVRS) for
    the Kakhovka reservoir, gauge alignment and datum work.
@@ -429,10 +433,13 @@ curl localhost:58000/jobs/<job_id> -H "$K"                 # poll until done
 | `GET /rasters`, `GET /rasters/{id}`, `GET /rasters/{id}/download` | raster registry and the COG itself |
 | `GET /granules` | per-granule status: `pending` / `fetched` / `empty` / `loaded` |
 
+On a server: `scripts/deploy_server.sh user@host` ([docs/deployment.md](docs/deployment.md)).
+
 Granules already `loaded` / `empty` are skipped, so a repeated job only pulls new
 passes, and every load is an upsert. Without docker:
 `python -m kakhovka_altimetry.service.worker --region kakhovka --product ATL13 --limit 5`.
-Full field-by-field guide: [docs/agents-api.md](docs/agents-api.md).
+Full documentation: [docs/](docs/README.md): architecture, data model, heights and
+DEMs, deployment, operations, and the agent guide, playbooks and tool definitions.
 
 **Verified on real data** (live SlideRule, this stack):
 
