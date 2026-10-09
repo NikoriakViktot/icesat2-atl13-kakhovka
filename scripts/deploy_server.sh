@@ -52,7 +52,7 @@ PY
 echo "==> code ($BRANCH) -> ~/$DIR"
 "${SSH[@]}" "set -e
   if [ -d '$DIR/.git' ]; then
-    cd '$DIR' && git fetch -q origin && git checkout -q '$BRANCH' && git pull -q --ff-only origin '$BRANCH'
+    (cd '$DIR' && git fetch -q origin && git checkout -q '$BRANCH' && git pull -q --ff-only origin '$BRANCH')
   else
     git clone -q --branch '$BRANCH' '$REPO_URL' '$DIR'
   fi
