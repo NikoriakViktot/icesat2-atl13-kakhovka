@@ -103,6 +103,10 @@ Use `.venv-service`.
   Loads must stay upserts.
 - **Credentials only from the environment.** Never accept Earthdata or S3 secrets
   in API bodies.
+- **Keys and ownership.** `API_KEYS` entries are `key | name:key | name:key:ro`;
+  writes need a read/write key (403 otherwise). Jobs and regions record `client`
+  and `X-Requested-By`; a region can be updated only by its owner (409).
+  Authorisation of end users is the BFF's job (Django), not this API's.
 - **FABDEM is CC BY-NC-SA 4.0** (non-commercial). Keep the attribution in docs and
   the README.
 

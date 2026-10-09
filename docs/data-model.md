@@ -36,10 +36,13 @@ uses `PRE_BREACH` (≤ 2023-06-05), `BREACH_DRAWDOWN` (2023-06-06 … 2023-12-31
 | `stats` | jsonb | counts, `dem_comparison`, `rasters` (see agents-api.md §5) |
 | `error` | text | exception + short traceback when failed |
 | `created_at`, `started_at`, `finished_at` | timestamptz | |
+| `client` | text | name of the API key that created it (`API_KEYS` `name:key`) |
+| `requested_by` | text | end user a BFF acted for (`X-Requested-By`) |
 
 ### `regions`: regions registered through the API
 `slug` PK, `definition` jsonb (the `RegionIn` body + `regimes=false`), `footprint`
-geometry (the clip), `created_at`, `updated_at`. Configured regions (`kakhovka`,
+geometry (the clip), `client`, `requested_by` (owner; only the owner may update the
+slug), `created_at`, `updated_at`. Configured regions (`kakhovka`,
 `kherson`, `dnipro_estuary`) come from `config/kakhovka.yaml` and are not stored here.
 
 ### `granules`: per-granule bookkeeping

@@ -92,7 +92,7 @@
           "regions"
         ],
         "summary": "Register Region",
-        "description": "Register (or update) an area of interest under ``slug``.",
+        "description": "Register (or update) an area of interest under ``slug``. Only the owner that\ncreated a slug (same API client and same ``X-Requested-By``) can update it.",
         "operationId": "register_region_regions_post",
         "parameters": [
           {
@@ -110,6 +110,25 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "name": "x-requested-by",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "end user the calling client acts for (BFF)",
+              "title": "X-Requested-By"
+            },
+            "description": "end user the calling client acts for (BFF)"
           }
         ],
         "requestBody": {
@@ -152,8 +171,51 @@
           "regions"
         ],
         "summary": "List Regions",
+        "description": "Configured regions (unless ``configured=false``) + registered ones, optionally\nonly those of one owner (``client`` / ``requested_by``).",
         "operationId": "list_regions_regions_get",
         "parameters": [
+          {
+            "name": "requested_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Requested By"
+            }
+          },
+          {
+            "name": "client",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Client"
+            }
+          },
+          {
+            "name": "configured",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Configured"
+            }
+          },
           {
             "name": "x-api-key",
             "in": "header",
@@ -284,6 +346,25 @@
               ],
               "title": "X-Api-Key"
             }
+          },
+          {
+            "name": "x-requested-by",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "end user the calling client acts for (BFF)",
+              "title": "X-Requested-By"
+            },
+            "description": "end user the calling client acts for (BFF)"
           }
         ],
         "requestBody": {
@@ -324,6 +405,7 @@
           "jobs"
         ],
         "summary": "List Jobs",
+        "description": "Newest first; filter by owner with ``client`` / ``requested_by``.",
         "operationId": "list_jobs_jobs_get",
         "parameters": [
           {
@@ -361,6 +443,38 @@
                 }
               ],
               "title": "Product"
+            }
+          },
+          {
+            "name": "requested_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Requested By"
+            }
+          },
+          {
+            "name": "client",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Client"
             }
           },
           {
@@ -1483,6 +1597,30 @@
               }
             ],
             "title": "Finished At"
+          },
+          "client": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client",
+            "description": "API key name that created the job"
+          },
+          "requested_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By",
+            "description": "end user (X-Requested-By)"
           }
         },
         "type": "object",

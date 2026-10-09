@@ -11,6 +11,7 @@
 - [Agent playbooks](docs/agent-playbooks.md): recipes (water levels, DEM validation, DTM/CHM rasters), sanity checks, system-prompt template
 - [Agent tool definitions](docs/agent-tools.json): JSON Schema tools with HTTP mapping, ready for LLM tool use
 - [OpenAPI contract](docs/openapi.json): machine-readable schema of every endpoint
+- [Frontend / BFF integration](docs/frontend.md): key scopes, X-Requested-By ownership, CORS, UI flow
 
 ## Understanding the data
 - [Data model](docs/data-model.md): every table, column, unit, datum and S3 path

@@ -3,9 +3,12 @@
     uvicorn kakhovka_altimetry.service.api:app        # OpenAPI UI at /docs
 
 Every endpoint except ``/health`` needs an ``X-API-Key`` header listed in the
-``API_KEYS`` environment variable. Requests only describe *what* to ingest
-(product + region + dates + options); Earthdata / S3 credentials live in the
-service environment. Agent-oriented usage notes: ``docs/agents-api.md``.
+``API_KEYS`` environment variable (``name:key`` read/write, ``name:key:ro`` read-only).
+A trusted client acting for its own users (the Django BFF) sends ``X-Requested-By``;
+it is recorded on jobs and regions. Browser origins allowed by CORS: ``CORS_ORIGINS``.
+Requests only describe *what* to ingest (product + region + dates + options);
+Earthdata / S3 credentials live in the service environment. Agent-oriented usage
+notes: ``docs/agents-api.md``; frontend / BFF integration: ``docs/frontend.md``.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ import io
 from typing import Annotated, Any, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
@@ -23,7 +27,7 @@ from ..config import load_config
 from ..regions import configured_regions, region_from_dict
 from . import storage
 from .repository import Repository
-from .settings import Settings, get_settings
+from .settings import ApiClient, Settings, get_settings
 
 app = FastAPI(
     title="ICESat-2 ingest",
@@ -35,6 +39,16 @@ app = FastAPI(
         "GET /jobs/{job_id} until status is 'done' or 'failed'."
     ),
 )
+
+if get_settings().cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(get_settings().cors_origins),
+        allow_methods=["GET", "POST"],
+        allow_headers=["X-API-Key", "X-Requested-By", "Content-Type"],
+        expose_headers=["Content-Disposition"],
+        max_age=600,
+    )
 
 ProductName = Literal["ATL13", "ATL08", "ATL03"]
 
@@ -141,6 +155,8 @@ class JobOut(BaseModel):
     created_at: dt.datetime | None = None
     started_at: dt.datetime | None = None
     finished_at: dt.datetime | None = None
+    client: str | None = Field(default=None, description="API key name that created the job")
+    requested_by: str | None = Field(default=None, description="end user (X-Requested-By)")
 
 
 # --------------------------------------------------------------------------- #
@@ -157,13 +173,30 @@ def repo_dep(settings: Annotated[Settings, Depends(settings_dep)]) -> Repository
 def require_key(
     settings: Annotated[Settings, Depends(settings_dep)],
     x_api_key: Annotated[str | None, Header()] = None,
-) -> None:
-    if not x_api_key or x_api_key not in settings.api_keys:
+) -> ApiClient:
+    client = settings.api_keys.get(x_api_key or "")
+    if client is None:
         raise HTTPException(status_code=401, detail="missing or invalid X-API-Key")
+    return client
+
+
+def require_write(client: Annotated[ApiClient, Depends(require_key)]) -> ApiClient:
+    if client.read_only:
+        raise HTTPException(status_code=403, detail=f"API key {client.name!r} is read-only")
+    return client
+
+
+def requested_by(
+    x_requested_by: Annotated[str | None, Header(
+        max_length=200, description="end user the calling client acts for (BFF)")] = None,
+) -> str | None:
+    return x_requested_by or None
 
 
 Auth = Depends(require_key)
 Repo = Annotated[Repository, Depends(repo_dep)]
+Writer = Annotated[ApiClient, Depends(require_write)]
+RequestedBy = Annotated[str | None, Depends(requested_by)]
 
 
 def _enqueue(job_id: str, settings: Settings, background: BackgroundTasks) -> None:
@@ -193,12 +226,16 @@ def _job_out(row: dict) -> JobOut:
     return JobOut(**{**row, "job_id": str(row["job_id"])})
 
 
-def _register(repo: Repository, region: RegionIn) -> dict[str, Any]:
+def _register(repo: Repository, region: RegionIn, client: ApiClient,
+              user: str | None) -> dict[str, Any]:
     if region.slug in configured_regions(load_config()):
         raise HTTPException(409, f"{region.slug!r} is a configured region; use region_slug")
     definition = region.definition()
     footprint = region_from_dict(definition).clip_geometry()
-    repo.upsert_region(definition, footprint.wkt)
+    if not repo.upsert_region(definition, footprint.wkt, client=client.name,
+                              requested_by=user):
+        raise HTTPException(409, f"region {region.slug!r} belongs to another owner; "
+                                 f"choose another slug")
     return definition
 
 
@@ -235,18 +272,24 @@ def list_products() -> list[dict[str, Any]]:
     } for p in products.PRODUCTS.values()]
 
 
-@app.post("/regions", status_code=201, tags=["regions"], dependencies=[Auth])
-def register_region(body: RegionIn, repo: Repo) -> dict[str, Any]:
-    """Register (or update) an area of interest under ``slug``."""
-    return _register(repo, body)
+@app.post("/regions", status_code=201, tags=["regions"])
+def register_region(body: RegionIn, repo: Repo, client: Writer,
+                    user: RequestedBy) -> dict[str, Any]:
+    """Register (or update) an area of interest under ``slug``. Only the owner that
+    created a slug (same API client and same ``X-Requested-By``) can update it."""
+    return _register(repo, body, client, user)
 
 
 @app.get("/regions", tags=["regions"], dependencies=[Auth])
-def list_regions(repo: Repo) -> list[dict[str, Any]]:
-    configured = configured_regions(load_config())
-    out = [{**r.to_dict(), "configured": True, "counts": repo.counts(r.slug)}
-           for r in configured.values()]
-    for d in repo.list_regions():
+def list_regions(repo: Repo, requested_by: str | None = None, client: str | None = None,
+                 configured: bool = True) -> list[dict[str, Any]]:
+    """Configured regions (unless ``configured=false``) + registered ones, optionally
+    only those of one owner (``client`` / ``requested_by``)."""
+    out = []
+    if configured and not (requested_by or client):
+        out = [{**r.to_dict(), "configured": True, "counts": repo.counts(r.slug)}
+               for r in configured_regions(load_config()).values()]
+    for d in repo.list_regions(client=client, requested_by=requested_by):
         out.append({**d, "configured": False, "counts": repo.counts(d["slug"])})
     return out
 
@@ -256,18 +299,20 @@ def get_region(slug: str, repo: Repo) -> dict[str, Any]:
     configured = configured_regions(load_config())
     if slug in configured:
         return {**configured[slug].to_dict(), "configured": True, "counts": repo.counts(slug)}
-    d = repo.get_region(slug)
-    if d is None:
+    row = repo.get_region_row(slug)
+    if row is None:
         raise HTTPException(404, "region not found")
-    return {**d, "configured": False, "counts": repo.counts(slug)}
+    return {**row["definition"], "configured": False, "client": row["client"],
+            "requested_by": row["requested_by"], "counts": repo.counts(slug)}
 
 
-@app.post("/jobs", status_code=202, response_model=JobOut, tags=["jobs"], dependencies=[Auth])
-def create_job(body: JobIn, background: BackgroundTasks, repo: Repo,
+@app.post("/jobs", status_code=202, response_model=JobOut, tags=["jobs"])
+def create_job(body: JobIn, background: BackgroundTasks, repo: Repo, client: Writer,
+               user: RequestedBy,
                settings: Annotated[Settings, Depends(settings_dep)]) -> JobOut:
     """Queue an ingest job. Poll ``GET /jobs/{job_id}`` for progress."""
     if body.region is not None:
-        slug = _register(repo, body.region)["slug"]
+        slug = _register(repo, body.region, client, user)["slug"]
     else:
         slug = body.region_slug
         _known_region(repo, slug)
@@ -278,15 +323,19 @@ def create_job(body: JobIn, background: BackgroundTasks, repo: Repo,
             raise HTTPException(422, f"ATL13 needs a coord on region {slug!r}")
     params = body.model_dump(mode="json", exclude={"region"})
     params["region_slug"] = slug
-    job_id = repo.create_job(slug, params, body.product)
+    job_id = repo.create_job(slug, params, body.product, client=client.name,
+                             requested_by=user)
     _enqueue(job_id, settings, background)
     return _job_out(repo.get_job(job_id))
 
 
 @app.get("/jobs", response_model=list[JobOut], tags=["jobs"], dependencies=[Auth])
 def list_jobs(repo: Repo, region: str | None = None, product: ProductName | None = None,
+              requested_by: str | None = None, client: str | None = None,
               limit: Annotated[int, Query(ge=1, le=500)] = 50) -> list[JobOut]:
-    return [_job_out(r) for r in repo.list_jobs(region, product, limit)]
+    """Newest first; filter by owner with ``client`` / ``requested_by``."""
+    return [_job_out(r) for r in repo.list_jobs(region, product, limit, client=client,
+                                                requested_by=requested_by)]
 
 
 @app.get("/jobs/{job_id}", response_model=JobOut, tags=["jobs"], dependencies=[Auth])

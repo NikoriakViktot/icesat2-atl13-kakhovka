@@ -2,6 +2,7 @@
 
 | I want to … | read |
 |---|---|
+| build a web frontend / BFF (keys, CORS, ownership) | [frontend.md](frontend.md) |
 | call the API from an AI agent | [agents-api.md](agents-api.md) → [agent-playbooks.md](agent-playbooks.md) → tools: [agent-tools.json](agent-tools.json) |
 | see the exact HTTP contract | [openapi.json](openapi.json) (live: `GET /openapi.json`, UI: `/docs`) |
 | understand how the service works | [architecture.md](architecture.md) |

@@ -77,13 +77,14 @@ class Repository:
             yield c
 
     # ------------------------------------------------------------------ jobs
-    def create_job(self, region: str, params: dict[str, Any], product: str = "ATL13") -> str:
+    def create_job(self, region: str, params: dict[str, Any], product: str = "ATL13", *,
+                   client: str | None = None, requested_by: str | None = None) -> str:
         job_id = str(uuid.uuid4())
         with self.conn() as c:
             c.execute(
-                "INSERT INTO icesat2.jobs (job_id, region, product, params) "
-                "VALUES (%s, %s, %s, %s)",
-                (job_id, region, product, json.dumps(params)),
+                "INSERT INTO icesat2.jobs (job_id, region, product, params, client, requested_by) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (job_id, region, product, json.dumps(params), client, requested_by),
             )
         return job_id
 
@@ -94,14 +95,14 @@ class Repository:
             ).fetchone()
 
     def list_jobs(self, region: str | None = None, product: str | None = None,
-                  limit: int = 50) -> list[dict]:
+                  limit: int = 50, *, client: str | None = None,
+                  requested_by: str | None = None) -> list[dict]:
         where, args = ["true"], []
-        if region:
-            where.append("region = %s")
-            args.append(region)
-        if product:
-            where.append("product = %s")
-            args.append(product)
+        for col, val in (("region", region), ("product", product), ("client", client),
+                         ("requested_by", requested_by)):
+            if val:
+                where.append(f"{col} = %s")
+                args.append(val)
         args.append(limit)
         with self.conn() as c:
             return c.execute(
@@ -134,29 +135,49 @@ class Repository:
                       [*args, job_id])
 
     # --------------------------------------------------------------- regions
-    def upsert_region(self, definition: dict[str, Any], footprint_wkt: str) -> None:
+    def upsert_region(self, definition: dict[str, Any], footprint_wkt: str, *,
+                      client: str | None = None, requested_by: str | None = None) -> bool:
+        """Insert or update; returns False (nothing written) when the slug belongs to
+        another owner (a different client, or a different end user of the same client)."""
         with self.conn() as c:
-            c.execute(
+            row = c.execute(
                 """
-                INSERT INTO icesat2.regions (slug, definition, footprint)
-                VALUES (%s, %s, ST_GeomFromText(%s, 4326))
+                INSERT INTO icesat2.regions (slug, definition, footprint, client, requested_by)
+                VALUES (%s, %s, ST_GeomFromText(%s, 4326), %s, %s)
                 ON CONFLICT (slug) DO UPDATE SET
                     definition = EXCLUDED.definition, footprint = EXCLUDED.footprint,
                     updated_at = now()
+                WHERE icesat2.regions.client IS NOT DISTINCT FROM EXCLUDED.client
+                  AND icesat2.regions.requested_by IS NOT DISTINCT FROM EXCLUDED.requested_by
+                RETURNING slug
                 """,
-                (definition["slug"], json.dumps(definition), footprint_wkt),
-            )
+                (definition["slug"], json.dumps(definition), footprint_wkt, client,
+                 requested_by),
+            ).fetchone()
+        return row is not None
 
     def get_region(self, slug: str) -> dict | None:
-        with self.conn() as c:
-            row = c.execute("SELECT definition FROM icesat2.regions WHERE slug = %s",
-                            (slug,)).fetchone()
+        row = self.get_region_row(slug)
         return row["definition"] if row else None
 
-    def list_regions(self) -> list[dict]:
+    def get_region_row(self, slug: str) -> dict | None:
         with self.conn() as c:
-            rows = c.execute("SELECT definition FROM icesat2.regions ORDER BY slug").fetchall()
-        return [r["definition"] for r in rows]
+            return c.execute("SELECT definition, client, requested_by, created_at, updated_at "
+                             "FROM icesat2.regions WHERE slug = %s", (slug,)).fetchone()
+
+    def list_regions(self, *, client: str | None = None,
+                     requested_by: str | None = None) -> list[dict]:
+        where, args = ["true"], []
+        for col, val in (("client", client), ("requested_by", requested_by)):
+            if val:
+                where.append(f"{col} = %s")
+                args.append(val)
+        with self.conn() as c:
+            rows = c.execute(
+                f"SELECT definition, client, requested_by FROM icesat2.regions "
+                f"WHERE {' AND '.join(where)} ORDER BY slug", args).fetchall()
+        return [{**r["definition"], "client": r["client"], "requested_by": r["requested_by"]}
+                for r in rows]
 
     def known_regions(self) -> list[str]:
         with self.conn() as c:

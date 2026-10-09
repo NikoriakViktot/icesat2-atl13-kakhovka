@@ -55,7 +55,8 @@ curl -fsS http://127.0.0.1:58000/health
 
 | variable | default | meaning |
 |---|---|---|
-| `API_KEYS` | — | comma-separated keys accepted in `X-API-Key`; **required** (none = every call 401) |
+| `API_KEYS` | — | comma-separated: `key`, `name:key` (read/write) or `name:key:ro` (read-only); **required** (none = every call 401). See [frontend.md](frontend.md) |
+| `CORS_ORIGINS` | empty | browser origins allowed to call the API directly, comma-separated; empty = no CORS |
 | `POSTGRES_PASSWORD` | `icesat2` | used when the db volume is first created; change it **before** the first start |
 | `DATABASE_URL` | localhost:55433 | host-side URL (containers override it) |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | dev creds | S3 credentials; for SeaweedFS they must match the S3 config file |
