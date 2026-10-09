@@ -1,0 +1,139 @@
+# Vertical datum configuration. Pins the whole vertical chain so ellipsoidal,
+# EGM2008-orthometric and EGG2015/EVRS heights are never silently mixed.
+#
+# --- Reference frames on the ellipsoidal side (documentation only) -------------
+# Nothing below reads these keys; they exist so the horizontal/geometric frame of
+# each input is stated instead of assumed.
+#
+#   ATL13 v7 ellipsoidal heights (ht_water_surf) are referenced to ITRF2020.
+#   The v7 reprocessing moved ICESat-2 from the earlier realization to ITRF2020,
+#   a change of roughly 7 mm in height at mid latitudes (larger near the poles).
+#   At our decimetre working precision this is negligible, but it must be stated
+#   rather than left implicit.
+#
+#   EGG2015 is referenced to GRS80 / ETRF2000 and is zero-tide.
+#   EVRF2019 (EPSG:9389) is also zero-tide -> this branch never mixes tide
+#   systems. That is a real strength and should be said explicitly in the paper.
+#
+#   UCS-2000 (УСК-2000) is the Ukrainian national frame. It is NOT used here,
+#   but any future route through the national quasigeoid model УКГ2025 would
+#   need it: УКГ2025 maps UCS-2000 ellipsoidal heights -> EVRS normal heights,
+#   so that branch would run ITRF2020 -> UCS-2000 -> УКГ2025 -> EVRF2019.
+#
+#   PREPARED NEXT STEP (no code yet, grid not in hand): with УКГ2025 the
+#   geodetic part of our empirical corrector becomes directly computable,
+#       c_geodetic = zeta_EGG2015 - zeta_UKG2025,
+#   because the ellipsoidal height cancels. The residual
+#       r_i = c_station - c_geodetic
+#   would then isolate the ATL13 bias + hydrology + matchup error for the first
+#   time, i.e. it would say how much of our -0.17 m is really EGG2015->EVRF2019
+#   and how much is ICESat-2. This is the strongest available next test.
+
+# --- EGG2015 European quasigeoid (the EVRS branch) -----------------------------
+# H_EVRS_EGG2015 = ht_water_surf (ellipsoidal) - zeta_EGG2015
+#
+# Confirmed by the project owner: the grid is the genuine EGG2015 gravimetric
+# quasigeoid (ref ellipsoid GRS80 / ETRF2000, consistent with EVRF2007 at the
+# cm-dm level). See the EUREF caveat: EGG2015 is NOT an official hybrid surface
+# for unconditional national-height -> EVRS conversion.
+egg2015:
+  # EGG2015 GeoTIFF from the hydro-platform donor repo: EPSG:4326, 1-arcmin,
+  # covers 25..85N / 50W..70E, values ~20-24 m over the Kakhovka reservoir.
+  # Native ISG (.isg) is also supported by vertical._load_isg.
+  #
+  # PROVENANCE BLOCKER (open, must be closed before publication): this file is
+  # 7200 x 3600 at 0.016667 deg == 1' x 1'. The EGG2015 release distributed
+  # publicly by the International Service for the Geoid is 10' x 15'; the full
+  # 1' x 1' grid is not published through that channel. So the donor repo's
+  # upstream source for this raster is unidentified and CANNOT yet be cited.
+  # This is a citation problem, not a numerical one -- the values behave
+  # correctly (egm2008_minus_evrs_m is -0.145 +/- 0.027 m and smooth).
+  #
+  # NAMING DISCIPLINE: h - zeta_EGG2015 yields an EVRF2007-CONSISTENT normal
+  # height, not an EVRF2019 one. EVRF2019 is reached only by adding the
+  # empirical corrector c(x,y). Never label the raw subtraction "EVRF2019".
+  path: data/1_data/egg_2015.tif
+  grid_crs: "EPSG:4326"      # taken from the file; ISG files (no EPSG) fall back to this
+  # Grid VALUE = zeta (quasigeoid height), subtracted from the ellipsoidal height.
+  quantity: quasigeoid_height
+  reference_ellipsoid: GRS80
+  height_system: EVRF2007
+  units: m
+  resampling: bilinear
+
+# --- EGM2008 geoid (independent cross-check only) ------------------------------
+# ATL13 already ships ht_ortho referenced to EGM2008. We only use it to compute
+# egm2008_minus_evrs_m as a sanity diagnostic; it NEVER feeds the EVRS chain.
+egm2008:
+  # ATL13 ht_ortho is used directly; no local grid required. If a local grid is
+  # provided it can be sampled instead of trusting the product column.
+  use_product_column: true
+  local_grid: null
+
+# --- Empirical vertical alignment (Phase 2, NOT used in V1) -------------------
+# `alignment_constant_m` = median( H_EVRS_ICESat(pass) - gauge_stage(t) ) over
+# calm PRE_BREACH passes. It is the number to add to a gauge stage series to get
+# an ICESat-2/EGG2015-consistent WSE. It is NOT a Baltic-1977 -> EVRS datum
+# offset: it also absorbs the gauge zero elevation and any systematic
+# ICESat-2 / EGG2015 bias, which cannot be separated from ICESat + gauges alone.
+alignment:
+  # Constant ADOPTED by the pipeline (added to gauge stage). null -> Phase-2
+  # matchup stays raw and datum.estimate_empirical_alignment() reports the estimate.
+  adopted_constant_m: null
+  per_station: {}            # station_id -> constant_m overrides, e.g. { 80959: 12.31 }
+  # Assumed systematic ATL13 inland-water bias (m), for the decomposition notes only.
+  atl13_bias_m: 0.0
+  notes: "empirical vertical alignment constant; NOT a Baltic->EVRS offset"
+
+# --- Official Baltic-1977 -> EVRF2019 transformation (Phase 2b) ----------------
+# EPSG:9902 is a GRID, not a constant, and it is NOT a quasigeoid: it maps one
+# system of normal heights (BS-77) onto another (EVRF2019). It does not involve
+# the ellipsoid at all.
+#
+# PROJ *defines* the operation -- `Baltic 1977 height to EVRF2019 height (1)`,
+# accuracy 0.068, grid `ua_2019z.asc` -- but ships no grid for it
+# (open_license=False, direct_download=False, empty URL, no Ukrainian grids on
+# the CDN), so PROJ reports it `available: False`. What PROJ can still offer
+# between these CRSs then degrades to a ballpark `proj=noop` that silently
+# returns 0. The grid is therefore read directly from the CRS-EU publication of
+# the same product, "UA_KRON/NH to EVRF2019zero", which is what Stopkhai et al.
+# (2026) used. Once the grid is in hand PROJ can do the shift itself -- see
+# scripts/export_datum_geotiff.py, which writes a PROJ-conformant GeoTIFF, and
+# tests/test_official_datum.py, which cross-checks our reader against PROJ.
+#
+# EPSG:9903 is the mean-tide sibling of 9902 and is deliberately NOT used here:
+# EGG2015 and EVRF2019 (EPSG:9389) are both zero-tide, so this branch never
+# mixes tide systems.
+#
+# Sign: value is ADDED to a Baltic 1977 height to get the EVRF2019 height.
+official_transform:
+  path: data/external/datum/ua_2019z.asc
+  source: "CRS-EU 'UA_KRON/NH to EVRF2019zero' == EPSG:9902 (ua_2019z.asc)"
+  source_url: "https://www.crs-geo.eu/crs/descrtrans/HTRANS2019/ua_2019z.asc"
+  epsg_operation: 9902
+  target_frame: EVRF2019
+  tide_system: zero-tide
+  # Published EPSG:9902 metadata, used for a NUMERICAL SANITY CHECK of the local
+  # file -- not a proof of identity. These statistics were determined over 154
+  # points, while our raster has 3776 cells, so agreement of three summary
+  # statistics says the file is consistent with the product, not that it IS the
+  # product. File identity is established by the SHA-256 recorded in
+  # outputs/reports/provenance.json. Extremes are milder in the IDW grid, so
+  # `max` is reported but not decisive -- see validate_against_published.
+  #
+  # accuracy_m (0.068) is EPSG's *operation accuracy* field. It is NOT a standard
+  # deviation and NOT a 95% CI: the same EPSG record separately reports sd_m
+  # 0.034 at the 154 determination points. Never relabel accuracy_m as a sigma
+  # and never combine it in quadrature with anything else.
+  published_stats: {mean_m: 0.151, min_m: 0.079, max_m: 0.285,
+                    sd_m: 0.034, accuracy_m: 0.068, n_determination_points: 154}
+  validation_tolerance_m: 0.02
+  expected_nodes: 3776          # node count quoted by Stopkhai et al. (2026)
+
+  # --- explicit budget terms -------------------------------------------------
+  # 0.0 means "not assumed", NOT "known to be zero". Each stays a visible line in
+  # the error budget so it cannot be absorbed into delta_unexplained_m.
+  evrf2019_minus_evrf2007_m: 0.0   # EGG2015 is EVRF2007-consistent; cm level
+  tide_system_correction_m: 0.0    # zero- vs mean-tide, ~2-3 cm at 47.7 N
+  egg2015_accuracy_m: 0.10         # quoted EGG2015 model error over UA; budget only
+  atl13_bias_m: 0.0

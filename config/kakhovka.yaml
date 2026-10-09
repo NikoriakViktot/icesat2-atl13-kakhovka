@@ -1,0 +1,115 @@
+# Area of interest and processing configuration for the Kakhovka reservoir.
+# Consumed by kakhovka_altimetry.config.load_config().
+
+aoi:
+  # Bounding box of the pre-breach reservoir (lon_min, lat_min, lon_max, lat_max).
+  # Used as the coarse spatial filter for discovery. The precise water mask comes
+  # from data/aoi/kakhovka_reservoir.gpkg (see `polygon`).
+  # East edge extended 35.25 -> 35.40 on 2026-09-02: the original value clipped the
+  # Plavni arm, wrongly masking 22 839 genuine water segments (median H_evrs
+  # 16.08 m, i.e. reservoir level) and leaving gauge 80961 with no ATL13 within 5 km.
+  bbox: [33.30, 46.70, 35.40, 47.90]
+  # Polygon of the *pre-breach* reservoir footprint. null -> use the bbox above.
+  # GeoJSON / GeoPackage / shapefile, any CRS (reprojected to EPSG:4326 on load).
+  # NOTE: data/Kakhovka_SA_2.geojson is a highly crenulated polygon with 8 island
+  # holes whose extent does not contain mid-reservoir points -- it looks like a
+  # post-breach / specific-water-level mask, not the full pre-breach pool. Confirm
+  # its epoch before enabling it here; until then the bbox is the safe default.
+  polygon: null
+  polygon_layer: null        # only used for multi-layer formats (GeoPackage)
+
+# ATL13 reference water bodies BELOW the Kakhovka dam, each pulled in its own
+# SlideRule request (scripts/download_atl13_downstream.py). NOT the reservoir
+# pool -- kept strictly separate from `aoi.bbox` above. Reference water bodies
+# are disjoint (each ATL13 segment belongs to exactly one refid), so the bbox
+# overlap around Kherson between `kherson` and `dnipro_estuary` is harmless.
+# refids + coords + granule lists come from the user's SlideRule web-client
+# requests (2026-09-04).
+downstream_bodies:
+  - name: Kherson lower Dnipro
+    slug: kherson
+    refid: 5952005933
+    coord: {lon: 32.613647040548, lat: 46.621527258416}
+    seed_granules: config/atl13_seed_granules_kherson.txt
+    # Wide box below the dam (46.775 N) past Kherson; the refid already restricts
+    # the pull to the river, this is only the pass-level clip + safety net.
+    clip: {bbox: [32.20, 46.30, 33.45, 47.00]}
+  - name: Dnipro-Buh liman
+    slug: dnipro_estuary
+    refid: 6033000138
+    coord: {lon: 31.991035882260, lat: 46.569005284542}
+    # Curated list (266 granules, 2018-10-17..2026-05-12): a CMR polygon search
+    # (sliderule.earthdata.cmr, ATL13 v007) against the clip polygon below, so
+    # it is complete for this analysis region by construction -- not a fallback.
+    seed_granules: config/atl13_seed_granules_dnipro_estuary.txt
+    # Convex hull (+buffer) of the operator's 17 landmark points, built by
+    # scripts/build_estuary_aoi.py from config/dnipro_estuary_points.csv. Spans
+    # the whole Dnipro-Buh liman incl. the Pivdenno-Buzkyi (Southern Bug) arm up
+    # to Mykolaiv; clips the pull to the liman + Dnipro/Buh mouths, excluding
+    # the open Black Sea.
+    clip: {polygon: data/aoi/dnipro_estuary.geojson}
+
+# SlideRule atl13x reference-point selector (from the working web-client request).
+# A single reference id + coordinate identifies the reservoir water body in the
+# ATL13 reference-water-body catalogue.
+atl13x:
+  refid: 2210000129
+  coord:
+    lon: 35.142864994566
+    lat: 47.774543574046
+  # SlideRule server and asset.
+  domain: slideruleearth.io
+  organization: null          # set for a private SlideRule deployment, else null
+
+# ICESat-2 product / time span.
+product:
+  short_name: ATL13
+  version: "007"
+  # ATL13 v7 series start; keep as the discovery lower bound.
+  start_date: "2018-10-13"
+  end_date: null              # null -> "today" at run time
+
+# Hydrological regimes. The reservoir ceased to exist as an impoundment after the
+# 2023-06-06 dam breach; downstream analysis MUST be split on these boundaries.
+regimes:
+  pre_breach_end: "2023-06-05"        # last full-reservoir day -> PRE_BREACH
+  breach_start: "2023-06-06"          # dam breach
+  # Start of the (new) quasi-stable river/residual-ponds state -> POST_BREACH.
+  # The transient BREACH_DRAWDOWN period is [breach_start, post_breach_start).
+  post_breach_start: "2024-01-01"
+
+# Per-pass quality control thresholds (see kakhovka_altimetry.qc).
+qc:
+  min_points_per_pass: 20            # ATL13 segments over water in one beam crossing
+  max_mad_m: 0.25                   # median absolute deviation of H_evrs within a pass
+  max_range_m: 1.0                  # p95 - p05 of H_evrs within a pass
+  min_track_length_km: 2.0         # along-track extent of water segments
+  max_stdev_water_surf_m: 0.5      # mean ATL13 ht_water_surf stdev flag
+  # Along-track surface slope that is physically implausible for still water.
+  max_along_track_slope_m_per_km: 0.05
+
+# Matchup settings (ICESat-2 overpass <-> gauge observation).
+matchup:
+  max_time_difference_hours: 12     # drop matchups outside this window
+  max_distance_to_gauge_km: 60      # drop gauges further than this from the pass
+  gauge_interpolation: linear       # "linear" | "nearest"
+
+# Phase 2a: local vertical alignment at a single gauge (see local_alignment.py).
+# ATL13 segments are selected by distance to the post, NOT from the reservoir-wide
+# pass levels. Only PRE_BREACH data is admissible for the tie.
+local_alignment:
+  station_id: 80959                 # Розумівка, at the ICESat-2 reference point
+  radii_km: [0.5, 1.0, 2.0, 3.0, 5.0]
+  main_radius_km: 2.0               # the accepted constant comes from this radius
+  diagnostic_radius_km: 10.0        # wider radius, per-RGT statistics only
+  # Local QC. The reservoir-wide qc.* thresholds (track length, along-track slope)
+  # are meaningless inside a few-km circle and are NOT reused here.
+  min_points_per_local_pass: 10
+  max_local_nmad_m: 0.25
+  # Plausibility gate, ICESat-only: the local pass level must be within this of the
+  # reservoir-wide ICESat level on the SAME date. Catches internally-consistent
+  # non-water returns (bank/land) that the NMAD test cannot see. Generous by design
+  # -- the quantity being estimated is ~0.35 m, two orders of magnitude inside it.
+  max_deviation_from_reservoir_m: 3.0
+  # A radius whose matchup count falls below this is reported as indicative only.
+  min_matchups_for_confidence: 5

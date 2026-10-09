@@ -1,0 +1,137 @@
+# Hydrological gauges on the Kakhovka reservoir. PHASE 2 ONLY -- V1 does not read
+# this file.
+#
+#   stage_m      = level above the gauge zero, from the raw data
+#   WSE_baltic_m = gauge_zero_baltic_m + stage_m   (nominal absolute WSE, BS-77)
+#
+# Phase 2 matches stage_m to ICESat-2 pass levels and estimates the empirical
+# vertical alignment constant (datum.estimate_empirical_alignment).
+#
+# Data source: the hydro-platform donor repo at data/1_data/. Level series:
+# data/1_data/data/parquet/post_id=<id>/year=*.parquet, daily h_08/h_20 term
+# readings (cm above gauge zero, local Kyiv 08:00/20:00). Coordinates from
+# data/1_data/data/гідропости_каховка.xlsx.
+#
+# GAUGE ZERO CAVEAT: the donor platform has no reliable per-station zeros (it uses
+# level anomalies). 12.00 m BS-77 below is the reservoir-wide nominal from
+# report_summary_uk.md (Каховське: НПР ~16.00, zero 12.00) -- absorbed into the
+# alignment constant, not separable from it.
+
+raw:
+  format: reservoir_parquet
+  dir: data/1_data/data/parquet
+  timezone: kyiv                     # term timestamps are Europe/Kyiv -> converted to UTC
+  stage_units: cm
+  nominal_obs_times_local: ["08:00", "20:00"]
+
+stations:
+  # id = post_id in the donor parquet layout.
+  - id: 80959
+    name: "с. Розумівка"
+    slug: rozumivka
+    name_en: "Rozumivka"
+    lon: 35.148890
+    lat: 47.771208
+    gauge_zero_baltic_m: 12.00
+    active_regimes: ["PRE_BREACH", "BREACH_DRAWDOWN", "POST_BREACH"]  # only long series (2020-2025), at the ICESat refid point
+  - id: 80961
+    name: "з.ст Плавні"
+    slug: plavni
+    name_en: "Plavni"
+    lon: 35.326056
+    lat: 47.567110
+    gauge_zero_baltic_m: 12.00
+    active_regimes: ["PRE_BREACH"]        # data 2020-2021 only
+  - id: 80963
+    name: "с. Благовіщенка"
+    slug: blahovishchenka
+    name_en: "Blahovishchenka"
+    lon: 34.821044
+    lat: 47.463877
+    gauge_zero_baltic_m: 12.00
+    active_regimes: ["PRE_BREACH"]
+  - id: 80964
+    name: "м. Нікополь"
+    slug: nikopol
+    name_en: "Nikopol"
+    lon: 34.375355
+    lat: 47.554451
+    gauge_zero_baltic_m: 12.00
+    active_regimes: ["PRE_BREACH"]
+  - id: 80971
+    name: "смт Велика Лепетиха"
+    slug: velyka_lepetykha
+    name_en: "Velyka Lepetykha"
+    lon: 33.931094
+    lat: 47.175331
+    gauge_zero_baltic_m: 12.00
+    active_regimes: ["PRE_BREACH"]
+  - id: 80977
+    name: "м. Нова Каховка"
+    slug: nova_kakhovka
+    name_en: "Nova Kakhovka"
+    lon: 33.374615
+    lat: 46.775432
+    gauge_zero_baltic_m: 12.00
+    active_regimes: ["PRE_BREACH"]
+
+  # Available in the donor but NOT included by default:
+  #   80962 Вищетарасівка, 80967 Грушівська дамба -- no parquet series
+  #   80957 Запоріжжя п.б. / 80949 Микільське-на-Дніпрі -- Dnipro reservoir
+  #     (above DniproHES), different pool and gauge zero (~43.71 m BS-77).
+
+# Dnipro river posts BELOW the Kakhovka dam. NOT part of the reservoir pool and
+# NOT read by the Phase 2c corrector engine (no gauge_zero_baltic_m -> a
+# GaugeStation built from these would be `complete == False`). Used only by
+# `kakhovka_altimetry.downstream` and notebook 09 for the downstream / Kherson
+# context section and the POST_BREACH corrector check.
+#
+#   80805 (Kherson) yearbook CSV `water_level_m_abs = h0 + level` with h0 ~ -5.00 m
+#   -> a genuine absolute BS-77 height. 98027 (Mykolaiv) has only relative cm
+#   (no h0) and approximate coordinates -- strictly a context series.
+downstream:
+  - id: 80805
+    name: "м. Херсон"
+    name_en: "Kherson"
+    slug: kherson
+    lon: 32.612026
+    lat: 46.623750
+    role: downstream_boundary
+    # Graph zero -5.00 m BS-77 (donor yearbook `water_level_m_abs = h0 + cm/100`
+    # back-solves to h0 ~= -5.00 m). Genuine absolute height; likely a rounded
+    # nominal -> still absorbs a gauge-zero error. Used to give the 2025 parquet
+    # (which lacks `water_level_m_abs`) an absolute height too.
+    gauge_zero_baltic_m: -5.00
+    series:
+      yearbook_csv: data/1_data/data/csv/dm_H/80805_yearbook.csv   # 2019-2023 daily
+      parquet_dir: data/1_data/data/parquet/post_id=80805          # 2025 term readings
+  - id: 80802
+    name: "м. Нова Каховка (р. Дніпро)"
+    name_en: "Nova Kakhovka (Dnipro river)"
+    slug: nova_kakhovka_dnipro
+    lon: 33.346666
+    lat: 46.758895
+    role: downstream_boundary
+    gauge_zero_baltic_m: null
+    series: {}                                                     # no timeseries in the donor
+  - id: 98027
+    name: "м. Миколаїв (Південний Буг)"
+    name_en: "Mykolaiv (Southern Bug)"
+    slug: mykolaiv
+    # Surveyed gauge position, operator-supplied 2026-09-04: 46°59'03.5"N 31°58'15.3"E.
+    lon: 31.970917
+    lat: 46.984306
+    role: downstream_boundary                 # official Southern Bug basin closing post
+    # Graph zero -5.00 m BS-77 (2021 yearbook: "Відмітка нуля поста -5.00 м БС"),
+    # same as Kherson 80805 -> H_BS77 = -5.00 + level_cm/100 is a genuine absolute
+    # height, so Mykolaiv is a second provisional coastal corrector point (not just
+    # context). Very likely a rounded nominal -> still absorbs a gauge-zero error.
+    gauge_zero_baltic_m: -5.00
+    coords_approx: false
+    # Level regime is wind setup/setdown (згонно-нагонні) dominated -- ±0.3..0.5 m events.
+    series:
+      # donor version-fragmented level parquet: version=*/{daily,monthly}/post_id=98027
+      # -- 'level' variable in cm above graph zero; years 2019, 2020, 2023.
+      parquet_versions_root: data/1_data/data/parquet
+      # 2021 transcribed from the paper yearbook (grid form, verified vs monthly means).
+      yearbook_grid_csv: config/mykolaiv_98027_2021_yearbook_grid.csv

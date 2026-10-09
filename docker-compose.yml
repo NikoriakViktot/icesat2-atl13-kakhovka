@@ -1,0 +1,91 @@
+# Local stack for the ATL13 ingest service.
+#   cp .env.example .env && docker compose up -d --build
+#   docker compose run --rm migrate          # once, and after schema changes
+#   API: http://localhost:58000/docs
+# Host ports avoid the defaults so they don't collide with other local services.
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: icesat2
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-icesat2}
+      POSTGRES_DB: icesat2
+    ports: ["55433:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U icesat2 -d icesat2"]
+      interval: 5s
+      retries: 20
+
+  # S3-compatible store for local dev (SeaweedFS S3 gateway; MinIO images are no
+  # longer publicly pullable). Dev credentials live in docker/seaweedfs-s3.json and
+  # must match AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in .env. Prod: AWS S3.
+  s3:
+    image: chrislusf/seaweedfs:3.80
+    command: server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
+    ports: ["58333:8333"]
+    volumes:
+      - s3data:/data
+      - ./docker/seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
+
+  s3-init:
+    build: .
+    env_file: [.env]
+    environment:
+      AWS_ENDPOINT_URL: http://s3:8333
+    command:
+      - python
+      - -c
+      - |
+        import os, time, s3fs
+        fs = s3fs.S3FileSystem()
+        for i in range(60):
+            try:
+                fs.mkdir(os.environ.get("S3_BUCKET", "icesat2")) if not fs.exists(os.environ.get("S3_BUCKET", "icesat2")) else None
+                print("bucket ready"); break
+            except Exception as exc:
+                print("waiting for s3:", exc); time.sleep(2)
+        else:
+            raise SystemExit("s3 never came up")
+    depends_on: [s3]
+
+  redis:
+    image: redis:7-alpine
+    ports: ["56379:6379"]
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    env_file: [.env]
+    environment: &internal
+      DATABASE_URL: postgresql://icesat2:${POSTGRES_PASSWORD:-icesat2}@db:5432/icesat2
+      AWS_ENDPOINT_URL: http://s3:8333
+      REDIS_URL: redis://redis:6379/0
+    depends_on: {db: {condition: service_healthy}}
+    profiles: [tools]
+
+  api:
+    build: .
+    env_file: [.env]
+    environment: *internal
+    ports: ["58000:8000"]
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_started}
+      s3-init: {condition: service_completed_successfully}
+
+  worker:
+    build: .
+    command: ["rq", "worker", "icesat2", "--url", "redis://redis:6379/0"]
+    env_file: [.env]
+    environment: *internal
+    volumes: [cache:/tmp/icesat2-cache]
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_started}
+      s3-init: {condition: service_completed_successfully}
+
+volumes:
+  pgdata:
+  s3data:
+  cache:

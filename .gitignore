@@ -151,6 +151,7 @@ activemq-data/
 .env
 .envrc
 .venv
+.venv-service/
 env/
 venv/
 ENV/
@@ -216,3 +217,81 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------------------------------------------------------------------------
+# Project-specific: large / derived data
+# ---------------------------------------------------------------------------
+# Raw downloads and external grids are large and reproducible from the manifest.
+data/raw/**
+!data/raw/**/.gitkeep
+data/external/**
+!data/external/**/.gitkeep
+data/interim/**
+!data/interim/.gitkeep
+data/processed/**
+!data/processed/.gitkeep
+
+# ICESat-2 granules
+*.h5
+
+# Large loose rasters dropped straight into data/ (geoid grids etc.)
+data/*.tif
+data/*.tiff
+data/*.vrt
+data/*_tmp.*
+
+# Donor / reference repo dropped in as a data source (huge; not part of this repo)
+data/1_data/
+
+# Generated figures/tables/reports (keep the folders + the canonical V1 results)
+outputs/figures/**
+!outputs/figures/.gitkeep
+!outputs/figures/map_*.png
+!outputs/figures/alignment_*.png
+!outputs/figures/datum_*.png
+!outputs/figures/atl13_wse_timeseries.png
+!outputs/figures/correction_by_*.png
+!outputs/figures/residual_*.png
+!outputs/figures/gauge_vs_icesat_timeseries.png
+!outputs/figures/uncertainty_budget.png
+!outputs/figures/spatial_*.png
+!outputs/figures/kherson_*.png
+!outputs/figures/dnipro_estuary_*.png
+!outputs/figures/coastal_zero_check.png
+outputs/tables/**
+!outputs/tables/.gitkeep
+!outputs/tables/atl13_pass_levels.csv
+!outputs/tables/*_local_matchups.csv
+!outputs/tables/*_alignment_by_radius.csv
+!outputs/tables/*_alignment_by_rgt.csv
+!outputs/tables/kakhovka_datum_comparison*.csv
+!outputs/tables/egg2015_to_evrf2019_*.csv
+!outputs/tables/gauge_icesat_egg2015_matchups.csv
+# Derived raster products: regenerable in one command, and they redistribute a
+# third-party grid — keep them out of git.
+outputs/rasters/**
+!outputs/rasters/.gitkeep
+
+outputs/reports/**
+!outputs/reports/.gitkeep
+!outputs/reports/atl13_v1_findings.md
+!outputs/reports/*_alignment.md
+!outputs/reports/kakhovka_datum_comparison.md
+!outputs/reports/egg2015_to_evrf2019_gauge_experiment.md
+!outputs/reports/kakhovka_corrector_surface.md
+!outputs/reports/kakhovka_spatial_model_comparison.md
+!outputs/reports/provenance.json
+
+# Executed notebook copies
+notebooks/**/*.nbconvert.ipynb
+
+# Donor notebooks are reference inputs, not tracked
+notebooks/_donor/*.ipynb
+
+# The AOI polygon and the resources manifest ARE tracked (small, canonical):
+!data/aoi/**
+!config/resources_manifest.csv
+
+# Regenerated from the canonical Kherson seed list — not tracked.
+config/resources_manifest_downstream.csv
+config/resources_manifest_downstream_*.csv

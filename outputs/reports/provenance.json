@@ -1,0 +1,69 @@
+{
+  "run_timestamp_utc": "2026-09-04T15:40:29.034658+00:00",
+  "git_commit": "b1c872044261b159bdb183e54279b87dd842c186",
+  "python_version": "3.12.3",
+  "random_seed": 20260904,
+  "atl13": {
+    "product": "ATL13",
+    "version": "007",
+    "doi": "10.5067/ATLAS/ATL13.007",
+    "n_granules_manifest": 323,
+    "n_rgts": 17,
+    "date_min": "2018-10-16",
+    "date_max": "2025-12-31",
+    "n_segments": 513873,
+    "periods": {
+      "PRE_BREACH": 401376,
+      "POST_BREACH": 80001,
+      "BREACH_DRAWDOWN": 32496
+    },
+    "n_granules_kherson": 177,
+    "n_granules_dnipro_estuary": 266
+  },
+  "sha256": {
+    "egg2015_grid": "933cb8372fa5832b76d2acefba115c34c07af225bc9ec1d12a71d9b18e756d40",
+    "epsg9902_grid": "297440243e2ed8d67b1a61c6099db173b5fb13f85973854198b167c6c67b1a95",
+    "atl13_evrs_parquet": "b919f20970501283854f9f9e76ace2a79cfa3def34ab86b5c436f135564a10f5",
+    "atl13_pass_levels": "60031306c1d9d6d9d4fb5c812ad26dbf22373565c12937cb1e006bc60d3ac257",
+    "kherson_evrs_parquet": "5e469ee359874db77047db3db50ec803cf86225480f9300776f024baab71e5d6",
+    "kherson_yearbook_csv": "8dedbb1599e038c0fbd2c81702069819b9070a2eb105f4363ecd85ac6ae7b660",
+    "dnipro_estuary_evrs_parquet": "c724517d89ed22d7935a6f41450c63af1d2766fcbf242bd14fa209b45de9ddb9",
+    "dnipro_estuary_polygon": "74e0665371075e1375eda8fc85d4ef91c46ac4a2f5dec5c257a5d3115aa8426c",
+    "mykolaiv_2021_grid_csv": "49b4a0624f9700907d32cdf9c711411e7083cf7e8fd44d1ad6734f00bfc1e4d0",
+    "gauge_parquet_tree": "b03e8f27459f9ad38c6cba6227427ee7c4a1e2719fef6725cbe37416fa5eef83"
+  },
+  "vertical_frame_terms_m": {
+    "evrf2019_minus_evrf2007_m": 0.0,
+    "tide_system_correction_m": 0.0,
+    "note": "0.0 == 'not assumed', kept as visible budget lines"
+  },
+  "pre_breach_cutoff": "2023-06-06",
+  "epsg9902_op_accuracy_m": 0.068,
+  "epsg9902_sd_at_determination_points_m": 0.034,
+  "egg2015_model_accuracy_m": 0.1,
+  "bootstrap_resamples": 10000,
+  "gauge_zero_bs77_m_nominal": 12.0,
+  "downstream": {
+    "bodies": {
+      "kherson": {
+        "refid": 5952005933,
+        "clip": [
+          32.2,
+          46.3,
+          33.45,
+          47.0
+        ],
+        "n_granules": 177
+      },
+      "dnipro_estuary": {
+        "refid": 6033000138,
+        "clip": "data/aoi/dnipro_estuary.geojson",
+        "n_granules": 266
+      }
+    },
+    "gauge_series_days": {
+      "kherson": 2176,
+      "mykolaiv": 1461
+    }
+  }
+}

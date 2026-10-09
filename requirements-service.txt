@@ -1,0 +1,17 @@
+# Service layer (API + worker + S3 + PostGIS) on top of requirements.txt
+-r requirements.txt
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+s3fs>=2024.3
+fsspec>=2024.3
+psycopg[binary]>=3.1
+sqlalchemy>=2.0       # alembic only
+alembic>=1.13
+rq>=1.16
+redis>=5.0
+httpx>=0.27           # FastAPI TestClient
+
+# Dev / integration tests
+moto[server]>=5.0
+testcontainers>=4.4

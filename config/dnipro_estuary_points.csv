@@ -1,0 +1,23 @@
+# Landmark points supplied by the operator (2026-09-04) delimiting "this territory"
+# for the Dnipro-Buh liman ATL13 pull (refid 6033000138). scripts/build_estuary_aoi.py
+# builds a buffered convex hull of these -> data/aoi/dnipro_estuary.geojson.
+# label is context only (a place name the operator dropped a pin near); geometry
+# uses lat/lon. Refreshed to full operator precision 2026-09-04.
+lat,lon,label
+46.624927,31.443333,Chorne more (Black Sea edge)
+47.008378,31.881315,
+46.48689568757973,32.03687232205048,
+46.943009,32.013518,
+46.56118205558298,32.30316985199245,
+46.621009202959975,32.03527810732258,
+46.613714,32.061352,Dniprovska zatoka
+46.625989,31.846967,Dniprovska zatoka
+46.579929,32.286637,Bilozerskyi r-n / Khersonska oblast
+46.497468,32.457297,
+46.539590,31.553263,
+47.009365911045876,31.985231709569636,
+46.948540438922045,31.904150990783865,
+46.468929,32.390300,Holoprystanskyi r-n / Khersonska oblast
+46.990417539903994,31.898433086378528,
+46.93841857475458,32.021080507624696,
+46.68109499682747,31.903267501160727,
