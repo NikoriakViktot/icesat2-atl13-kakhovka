@@ -3,7 +3,7 @@
 # Every port is bound to 127.0.0.1: put a TLS reverse proxy (Caddy/nginx) in front
 # of the API and never expose Postgres / S3 / Redis publicly. See docs/deployment.md.
 services:
-  db:
+  db:                     # only with COMPOSE_PROFILES=localdb
     restart: unless-stopped
     ports: !override ["127.0.0.1:55433:5432"]
   s3:

@@ -28,7 +28,7 @@ results back.
 |---|---|---|---|
 | `api` | `Dockerfile` | FastAPI: validation, region registry, job creation, result reads | 58000 |
 | `worker` | `Dockerfile` | `rq worker icesat2`: runs `service.worker.run_job` | — |
-| `db` | `postgis/postgis:16-3.4` | all structured results | 55433 |
+| `db` | existing PostGIS (server: `geoai-postgis-1` / `geohydro`), or bundled `postgis/postgis:16-3.4` (profile `localdb`) | all structured results, schema `icesat2` | 55433 (bundled) |
 | `s3` | `chrislusf/seaweedfs:3.80` (dev) / AWS S3 (prod) | files: parquet, COGs, reference tiles | 58333 |
 | `redis` | `redis:7-alpine` | job queue | 56379 |
 | `migrate` | `Dockerfile` | `alembic upgrade head` (profile `tools`) | — |

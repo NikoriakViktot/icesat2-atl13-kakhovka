@@ -129,6 +129,11 @@ Use `.venv-service`.
 - SlideRule `atl13x` works with `coord` alone (same rows as `refid` + `coord`).
   SlideRule's CMR proxy (`sliderule.earthdata.cmr`) needs no Earthdata login.
 - Host port 8000 is taken on the dev machine, so the API is on **58000**.
+- **Database is shared.** On the server the service uses the platform PostGIS
+  (`geoai-postgis-1`, db `geohydro`) via `CONTAINER_DATABASE_URL`; the bundled PostGIS
+  is only the `localdb` profile. Keep every object in schema `icesat2`, including the
+  Alembic version table (`migrations/env.py` sets `version_table_schema`); never
+  create anything in `public`.
 
 ## Adding a product (e.g. ATL06)
 

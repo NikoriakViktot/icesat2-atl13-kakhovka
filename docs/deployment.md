@@ -15,6 +15,45 @@ University of Bristol (`data.bris.ac.uk`). No inbound port except your reverse p
 | Disk | 20 GB + data | Postgres + S3 volumes; the EGG2015 grid is 207 MB; DEM tiles 20–60 MB each |
 | Access | SSH key login, `git`, `curl`, `python3` | used by `scripts/deploy_server.sh` |
 
+## Database: the existing PostGIS (recommended)
+
+The service does not need its own PostgreSQL. Everything it creates lives in the
+schema **`icesat2`**, including its migration table (`icesat2.alembic_version`),
+so it can share the platform database (`geoai-postgis-1`, database `geohydro`)
+without touching Django's tables.
+
+Once, as a superuser of that PostGIS (run it on the server):
+
+```bash
+docker exec -i geoai-postgis-1 psql -U postgres -d geohydro <<'SQL'
+CREATE ROLE icesat2 LOGIN PASSWORD 'change-me';
+GRANT CONNECT, CREATE ON DATABASE geohydro TO icesat2;   -- CREATE: lets it create schema icesat2
+-- PostGIS is already installed in geohydro; otherwise: CREATE EXTENSION postgis;
+SQL
+docker inspect geoai-postgis-1 --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'
+```
+
+Then deploy with that database (the network is the one printed by `docker inspect`):
+
+```bash
+scripts/deploy_server.sh user@server \
+  --db-url 'postgresql://icesat2:change-me@geoai-postgis-1:5432/geohydro' \
+  --db-network geoai_default
+```
+
+Both values are written to the server's `.env` (`CONTAINER_DATABASE_URL`,
+`EXTERNAL_DB_NETWORK`) and kept by later runs. The compose file
+`docker-compose.external-db.yml` attaches `api`, `worker` and `migrate` to that network.
+A PostGIS published on a host port works too, without a network:
+`--db-url postgresql://icesat2:…@host.docker.internal:<port>/<db>`.
+
+To read the service's tables from Django or QGIS, use the same database: schema
+`icesat2` (e.g. `icesat2.atl13_pass_levels`). Grant read access to the Django role if
+needed: `GRANT USAGE ON SCHEMA icesat2 TO <django_role>; GRANT SELECT ON ALL TABLES IN
+SCHEMA icesat2 TO <django_role>;`.
+
+Without `CONTAINER_DATABASE_URL` the stack starts its own PostGIS (profile `localdb`).
+
 ## One-command deploy
 
 On the workstation:
@@ -58,7 +97,9 @@ curl -fsS http://127.0.0.1:58000/health
 | `API_KEYS` | — | comma-separated: `key`, `name:key` (read/write) or `name:key:ro` (read-only); **required** (none = every call 401). See [frontend.md](frontend.md) |
 | `CORS_ORIGINS` | empty | browser origins allowed to call the API directly, comma-separated; empty = no CORS |
 | `POSTGRES_PASSWORD` | `icesat2` | used when the db volume is first created; change it **before** the first start |
-| `DATABASE_URL` | localhost:55433 | host-side URL (containers override it) |
+| `CONTAINER_DATABASE_URL` | empty | the database **as seen from the containers**; set it to use an existing PostGIS (schema `icesat2`); empty = bundled PostGIS |
+| `EXTERNAL_DB_NETWORK` | empty | Docker network of that PostGIS container (adds `docker-compose.external-db.yml`) |
+| `DATABASE_URL` | localhost:55433 | the same database from the host (tools, tests); containers use `CONTAINER_DATABASE_URL` |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | dev creds | S3 credentials; for SeaweedFS they must match the S3 config file |
 | `AWS_ENDPOINT_URL` | `http://localhost:58333` | custom S3 endpoint; **remove** it to use AWS S3 |
 | `AWS_REQUEST_CHECKSUM_CALCULATION`, `AWS_RESPONSE_CHECKSUM_VALIDATION` | `when_required` | **keep** for any non-AWS S3, or objects are stored corrupted |

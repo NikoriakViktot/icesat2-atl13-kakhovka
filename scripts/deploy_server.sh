@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
 # Deploy (or update) the ICESat-2 ingest stack on a Linux server over SSH.
 #
-#   scripts/deploy_server.sh user@host [--dir icesat2-ingest] [--branch main]
-#                            [--port 22] [--egg /local/path/egg_2015.tif]
+#   scripts/deploy_server.sh user@host [--dir icesat2-ingest] [--branch main] [--port 22]
+#        [--egg /local/egg_2015.tif] [--db-url URL] [--db-network NET]
 #   scripts/deploy_server.sh local ...     # same steps on this machine (no SSH)
 #
-# Needs on the server: git, Docker Engine + Compose >= 2.24, and this machine's
-# public key in ~/.ssh/authorized_keys. First run generates .env with random
-# secrets (printed once) and the SeaweedFS credentials file; later runs keep them.
-# Everything binds to 127.0.0.1 (docker-compose.prod.yml); see docs/deployment.md
-# for the reverse proxy.
+# Database: --db-url points the service at an EXISTING PostGIS (as seen from inside
+# the containers), e.g. postgresql://icesat2:<pw>@geoai-postgis-1:5432/geohydro with
+# --db-network geoai_default (the network of that container). Without --db-url (and no
+# CONTAINER_DATABASE_URL in .env) the stack runs its own PostGIS (profile localdb).
+# Both values are stored in the server's .env; later runs keep them.
+#
+# Needs on the server: git, Docker Engine + Compose >= 2.24, this machine's public key
+# in ~/.ssh/authorized_keys. First run generates .env with random secrets (API key
+# printed once). Ports bind to 127.0.0.1 (docker-compose.prod.yml). docs/deployment.md.
 set -euo pipefail
 
-usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 [[ $# -ge 1 && $1 != -h && $1 != --help ]] || usage 1
 
 TARGET=$1; shift
-DIR=icesat2-ingest; BRANCH=main; PORT=22; EGG=""
+DIR=icesat2-ingest; BRANCH=main; PORT=22; EGG=""; DB_URL=""; DB_NETWORK=""
 REPO_URL=${REPO_URL:-https://github.com/NikoriakViktot/icesat2-ingest.git}
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -24,6 +28,8 @@ while [[ $# -gt 0 ]]; do
     --branch) BRANCH=$2; shift 2 ;;
     --port) PORT=$2; shift 2 ;;
     --egg) EGG=$2; shift 2 ;;
+    --db-url) DB_URL=$2; shift 2 ;;
+    --db-network) DB_NETWORK=$2; shift 2 ;;
     -h|--help) usage ;;
     *) echo "unknown option $1" >&2; usage 1 ;;
   esac
@@ -37,6 +43,16 @@ else
   SSH=(ssh -p "$PORT" -o BatchMode=yes -o ConnectTimeout=15 "$TARGET")
   copy() { scp -q -P "$PORT" "$1" "$TARGET:$DIR/$(basename "$2")"; }
 fi
+
+# `compose` on the server: prod overrides, the external-db network when configured,
+# and the bundled PostGIS only when no external database is configured.
+COMPOSE_FN='compose() {
+  f="-f docker-compose.yml -f docker-compose.prod.yml"
+  grep -q "^EXTERNAL_DB_NETWORK=." .env && f="$f -f docker-compose.external-db.yml"
+  p=""; grep -q "^CONTAINER_DATABASE_URL=." .env || p="--profile localdb"
+  docker compose $f $p "$@"
+}'
+
 echo "==> checking $TARGET"
 "${SSH[@]}" 'set -e
   command -v git >/dev/null || { echo "git missing on server" >&2; exit 2; }
@@ -77,26 +93,46 @@ JSON
   chmod 600 .env docker/seaweedfs-s3.local.json
   echo \"generated .env - API key (shown once, also in ~/$DIR/.env): \$API_KEY\""
 
-COMPOSE="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
+if [[ -n $DB_URL || -n $DB_NETWORK ]]; then
+  echo "==> database settings -> .env"
+  # base64 so URLs with @ : / ? & survive the shell hops untouched
+  enc() { printf '%s' "$1" | base64 -w0; }
+  "${SSH[@]}" "set -e; cd '$DIR'
+    python3 - '$(enc "$DB_URL")' '$(enc "$DB_NETWORK")' <<'PY'
+import base64, pathlib, sys
+url, net = (base64.b64decode(a).decode() for a in sys.argv[1:3])
+env = pathlib.Path('.env')
+lines = [l for l in env.read_text().splitlines()
+         if not (url and l.startswith('CONTAINER_DATABASE_URL='))
+         and not (net and l.startswith('EXTERNAL_DB_NETWORK='))]
+if url:
+    lines.append('CONTAINER_DATABASE_URL=' + url)
+if net:
+    lines.append('EXTERNAL_DB_NETWORK=' + net)
+env.write_text('\n'.join(lines) + '\n')
+print('database:', url.split('@')[-1] if url else '(unchanged)', '| network:', net or '(unchanged)')
+PY"
+fi
+
 echo "==> build + start"
-"${SSH[@]}" "set -e; cd '$DIR'
-  $COMPOSE --profile tools build -q
-  $COMPOSE up -d --remove-orphans
-  $COMPOSE --profile tools run --rm migrate
-  echo \"schema at revision \$($COMPOSE exec -T db psql -U icesat2 -d icesat2 -Atc \
-    'select version_num from public.alembic_version')\""
+"${SSH[@]}" "set -e; cd '$DIR'; $COMPOSE_FN
+  if grep -q '^CONTAINER_DATABASE_URL=.' .env; then echo 'database: external'; else echo 'database: bundled (localdb)'; fi
+  compose --profile tools build -q
+  compose up -d --remove-orphans
+  compose --profile tools run --rm migrate
+  echo \"schema at revision \$(compose --profile tools run --rm -T migrate alembic current 2>/dev/null | tail -1)\""
 
 if [[ -n $EGG ]]; then
   echo "==> EGG2015 grid -> S3"
   copy "$EGG" .egg_2015.tif
-  "${SSH[@]}" "set -e; cd '$DIR'
-    $COMPOSE cp .egg_2015.tif api:/tmp/egg_2015.tif && rm -f .egg_2015.tif
-    $COMPOSE exec -T api python -c \"import os, s3fs; u = os.environ['EGG2015_URI']; \
+  "${SSH[@]}" "set -e; cd '$DIR'; $COMPOSE_FN
+    compose cp .egg_2015.tif api:/tmp/egg_2015.tif && rm -f .egg_2015.tif
+    compose exec -T api python -c \"import os, s3fs; u = os.environ['EGG2015_URI']; \
 s3fs.S3FileSystem().put('/tmp/egg_2015.tif', u.split('://', 1)[1]); print('uploaded', u)\""
 fi
 
 echo "==> health"
 "${SSH[@]}" "for i in \$(seq 1 30); do curl -fsS http://127.0.0.1:58000/health && exit 0; sleep 2; done; \
-  echo 'API not healthy' >&2; cd '$DIR' && $COMPOSE ps; exit 1"
+  echo 'API not healthy' >&2; cd '$DIR'; $COMPOSE_FN; compose ps; exit 1"
 echo
 echo "done. API on the server at http://127.0.0.1:58000 (docs/deployment.md: reverse proxy)."
