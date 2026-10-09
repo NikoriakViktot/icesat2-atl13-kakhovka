@@ -105,9 +105,12 @@ curl -fsS http://127.0.0.1:58000/health
 | `AWS_REQUEST_CHECKSUM_CALCULATION`, `AWS_RESPONSE_CHECKSUM_VALIDATION` | `when_required` | **keep** for any non-AWS S3, or objects are stored corrupted |
 | `S3_BUCKET`, `S3_PREFIX` | `icesat2`, `icesat2` | where everything is written |
 | `EGG2015_URI` | `s3://icesat2/icesat2/reference/egg_2015.tif` | EGG2015 grid, `egg2015` regions only |
+| `S3_BACKEND` | empty | `aws`: use AWS S3 (adds `docker-compose.aws-s3.yml`: no SeaweedFS, no endpoint override) |
+| `BFF_NETWORK` | empty | Docker network of a BFF (e.g. `geoai_web`); the API joins it as `icesat2-api` (adds `docker-compose.bff-network.yml`) |
 | `SEAWEED_S3_CONFIG` | `./docker/seaweedfs-s3.json` | SeaweedFS identities file (deploy script: `docker/seaweedfs-s3.local.json`) |
 | `REDIS_URL` | localhost:56379 | host-side; containers use `redis://redis:6379/0` |
 | `JOB_RUNNER` | `rq` | `inline` runs jobs inside the API process (tests only) |
+| `WORKER_REPLICAS` | 2 | RQ workers in production; 1 on a 2 vCPU host |
 | `BATCH_SIZE`, `FETCH_RETRIES` | 50, 3 | defaults when a job does not set them |
 | `CACHE_DIR` | `/tmp/icesat2-cache` | worker cache (geoid grid, DEM tiles, PROJ grid); a volume in compose |
 | `EARTHDATA_USERNAME`, `EARTHDATA_PASSWORD` | — | optional; only for the earthaccess CMR fallback |
@@ -150,11 +153,25 @@ Never expose Postgres, S3 or Redis publicly; reach them with an SSH tunnel
 
 ## Using AWS S3 instead of SeaweedFS
 
-Create the bucket, put an IAM user's keys into `AWS_ACCESS_KEY_ID` /
-`AWS_SECRET_ACCESS_KEY`, set `AWS_DEFAULT_REGION`, **delete** `AWS_ENDPOINT_URL` and
-the `AWS_ENDPOINT_URL: http://s3:8333` line of the shared `&internal` environment
-block in `docker-compose.yml` (or override it), and stop the `s3` / `s3-init` services. The IAM policy needs
-`s3:GetObject`, `PutObject`, `DeleteObject`, `ListBucket` on the bucket.
+In `.env`: `S3_BACKEND=aws`, `S3_BUCKET=<bucket>`, `S3_PREFIX`, `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`, and **delete** `AWS_ENDPOINT_URL` and
+`SEAWEED_S3_CONFIG`. `scripts/deploy_server.sh` then adds `docker-compose.aws-s3.yml`, which
+drops the `s3` / `s3-init` services and the SeaweedFS endpoint from the containers. The IAM
+policy needs `s3:GetObject`, `PutObject`, `DeleteObject`, `ListBucket` on the bucket (prefix).
+
+## Behind a BFF on the same host
+
+`BFF_NETWORK=<network>` in `.env` adds `docker-compose.bff-network.yml`: the API joins that
+external network as `icesat2-api`, so e.g. Django on it uses `ICESAT2_API_URL=http://icesat2-api:8000`
+with its own `django:<key>` from `API_KEYS` (send only the key part in `X-API-Key`). The worker,
+Redis and the database stay off that network.
+
+Compose registers service names (`api`, `worker`, `migrate`) as DNS aliases on every network a
+service joins. Never join a network that already has a service with one of those names: on
+geohydroai.org, `geoai_web` has the site's own `api`, and nginx would start sending its traffic
+here. There the service uses the Django platform's PostGIS instead
+(`EXTERNAL_DB_NETWORK=geohydroai-platform_default`, database `platform`, schema `icesat2`), and
+Django reaches the API on that network by container name: `http://icesat2-ingest-api-1:8000`.
 
 ## Updating
 
