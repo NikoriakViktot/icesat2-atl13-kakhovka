@@ -1,0 +1,12 @@
+.git
+.venv*
+.idea
+.claude
+**/__pycache__
+**/*:Zone.Identifier
+data/raw
+data/processed
+data/interim
+data/external
+outputs
+notebooks

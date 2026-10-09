@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "icesat2-dev",
+      "credentials": [{"accessKey": "icesat2", "secretKey": "icesat2-secret"}],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

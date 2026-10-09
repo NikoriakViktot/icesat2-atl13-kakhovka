@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kakhovka-altimetry"
+version = "0.1.0"
+description = "Reproducible ICESat-2 ATL13 -> EVRS water-surface elevation pipeline for the Kakhovka reservoir"
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+# The batch interface is scripts/*.py (run with `python scripts/<name>.py`).
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["E501", "E402", "I001"]
+"notebooks/*" = ["E402", "E501", "F401", "I001"]
+"tests/*" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
