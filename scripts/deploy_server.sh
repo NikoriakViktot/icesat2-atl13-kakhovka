@@ -82,7 +82,9 @@ echo "==> build + start"
 "${SSH[@]}" "set -e; cd '$DIR'
   $COMPOSE --profile tools build -q
   $COMPOSE up -d --remove-orphans
-  $COMPOSE --profile tools run --rm migrate 2>&1 | grep -E 'Running upgrade|ERROR' || echo 'schema up to date'"
+  $COMPOSE --profile tools run --rm migrate
+  echo \"schema at revision \$($COMPOSE exec -T db psql -U icesat2 -d icesat2 -Atc \
+    'select version_num from public.alembic_version')\""
 
 if [[ -n $EGG ]]; then
   echo "==> EGG2015 grid -> S3"
