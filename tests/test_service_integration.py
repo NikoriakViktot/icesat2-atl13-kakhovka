@@ -70,7 +70,8 @@ def stack():
         dsn = pg.get_connection_url()
         mp.setenv("DATABASE_URL", dsn)
         mp.setenv("S3_BUCKET", "icesat2-test")
-        mp.setenv("API_KEYS", API_KEY)
+        mp.setenv("API_KEYS", f"{API_KEY},django:dj-key,front:ro-key:ro")
+        mp.setenv("CORS_ORIGINS", "http://localhost:5173")
         mp.setenv("JOB_RUNNER", "inline")
         mp.setenv("FETCH_RETRIES", "1")
         mp.delenv("EGG2015_URI", raising=False)
@@ -273,3 +274,52 @@ def test_atl08_with_dem_comparison_and_rasters(stack, repo):
 
     products = {p["product"] for p in client.get("/products", headers=h).json()}
     assert products == {"ATL13", "ATL08", "ATL03"}
+
+
+def test_key_scopes_cors_and_ownership(stack, repo):
+    from fastapi.testclient import TestClient
+
+    from kakhovka_altimetry.service.api import app
+
+    client = TestClient(app)
+    dj = {"X-API-Key": "dj-key"}
+    ro = {"X-API-Key": "ro-key"}
+    area = {"slug": "owned_area", "bbox": [33.30, 46.70, 33.45, 46.80]}
+
+    # read-only key: reads fine, writes 403
+    assert client.get("/products", headers=ro).status_code == 200
+    assert client.post("/regions", headers=ro, json=area).status_code == 403
+    assert client.post("/jobs", headers=ro, json={"product": "ATL08",
+                                                  "region": area}).status_code == 403
+
+    # the BFF acts for user 42: ownership is recorded
+    r = client.post("/regions", headers={**dj, "X-Requested-By": "user:42"}, json=area)
+    assert r.status_code == 201
+    row = client.get("/regions/owned_area", headers=ro).json()
+    assert (row["client"], row["requested_by"]) == ("django", "user:42")
+    # same owner may update; another user of the same client may not
+    assert client.post("/regions", headers={**dj, "X-Requested-By": "user:42"},
+                       json=area).status_code == 201
+    assert client.post("/regions", headers={**dj, "X-Requested-By": "user:7"},
+                       json=area).status_code == 409
+    assert client.post("/regions", headers={"X-API-Key": API_KEY},
+                       json=area).status_code == 409
+
+    job = client.post("/jobs", headers={**dj, "X-Requested-By": "user:42"}, json={
+        "product": "ATL08", "region_slug": "owned_area",
+        "start": "2021-05-01", "end": "2021-07-31"}).json()
+    assert (job["client"], job["requested_by"]) == ("django", "user:42")
+    mine = client.get("/jobs", headers=dj, params={"requested_by": "user:42"}).json()
+    assert [j["job_id"] for j in mine] == [job["job_id"]]
+    assert client.get("/jobs", headers=dj, params={"requested_by": "user:7"}).json() == []
+    regions = client.get("/regions", headers=dj, params={"requested_by": "user:42"}).json()
+    assert [x["slug"] for x in regions] == ["owned_area"]
+
+    # CORS: the allowed origin gets the headers (preflight included), others don't
+    pre = client.options("/jobs", headers={
+        "Origin": "http://localhost:5173", "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "x-api-key,content-type"})
+    assert pre.status_code == 200
+    assert pre.headers["access-control-allow-origin"] == "http://localhost:5173"
+    other = client.get("/health", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in other.headers

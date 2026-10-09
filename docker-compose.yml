@@ -1,10 +1,15 @@
-# Local stack for the ATL13 ingest service.
-#   cp .env.example .env && docker compose up -d --build
+# Stack of the ICESat-2 ingest service.
+#   cp .env.example .env
+#   Existing PostGIS (default): set CONTAINER_DATABASE_URL in .env, e.g. the platform
+#     database geoai-postgis-1/geohydro (own schema `icesat2`); see docs/deployment.md
+#   Bundled PostGIS instead:    COMPOSE_PROFILES=localdb (and leave CONTAINER_DATABASE_URL empty)
+#   docker compose --profile tools build && docker compose up -d
 #   docker compose run --rm migrate          # once, and after schema changes
 #   API: http://localhost:58000/docs
 # Host ports avoid the defaults so they don't collide with other local services.
 services:
-  db:
+  db:                     # optional: only with the `localdb` profile
+    profiles: [localdb]
     image: postgis/postgis:16-3.4
     environment:
       POSTGRES_USER: icesat2
@@ -58,13 +63,15 @@ services:
     command: ["alembic", "upgrade", "head"]
     env_file: [.env]
     environment: &internal
-      DATABASE_URL: postgresql://icesat2:${POSTGRES_PASSWORD:-icesat2}@db:5432/icesat2
+      # the database as seen from inside the containers
+      DATABASE_URL: ${CONTAINER_DATABASE_URL:-postgresql://icesat2:${POSTGRES_PASSWORD:-icesat2}@db:5432/icesat2}
       AWS_ENDPOINT_URL: http://s3:8333
       REDIS_URL: redis://redis:6379/0
       # EGM2008 geoid grid for ATL08/ATL03 heights, fetched from the PROJ CDN once
       PROJ_NETWORK: "ON"
       PROJ_USER_WRITABLE_DIRECTORY: /tmp/icesat2-cache/proj
-    depends_on: {db: {condition: service_healthy}}
+    depends_on: {db: {condition: service_healthy, required: false}}
+    extra_hosts: ["host.docker.internal:host-gateway"]
     profiles: [tools]
 
   api:
@@ -72,8 +79,9 @@ services:
     env_file: [.env]
     environment: *internal
     ports: ["58000:8000"]
+    extra_hosts: ["host.docker.internal:host-gateway"]   # a PostGIS published on the host
     depends_on:
-      db: {condition: service_healthy}
+      db: {condition: service_healthy, required: false}
       redis: {condition: service_started}
       s3-init: {condition: service_completed_successfully}
 
@@ -83,8 +91,9 @@ services:
     env_file: [.env]
     environment: *internal
     volumes: [cache:/tmp/icesat2-cache]
+    extra_hosts: ["host.docker.internal:host-gateway"]   # a PostGIS published on the host
     depends_on:
-      db: {condition: service_healthy}
+      db: {condition: service_healthy, required: false}
       redis: {condition: service_started}
       s3-init: {condition: service_completed_successfully}
 

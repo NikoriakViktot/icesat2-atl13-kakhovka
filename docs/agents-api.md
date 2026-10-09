@@ -20,7 +20,8 @@ service handles NASA access, storage and processing.
 | | |
 |---|---|
 | Base URL (local stack) | `http://localhost:58000` |
-| Auth | header `X-API-Key: <key>` on every call except `GET /health` |
+| Auth | header `X-API-Key: <key>` on every call except `GET /health`; read-only keys get 403 on `POST` |
+| Acting for a user | optional header `X-Requested-By: <user id>` (BFFs); recorded on jobs and regions, filter with `?requested_by=` |
 | Format | JSON in, JSON / GeoJSON / CSV / GeoTIFF out |
 | Units | metres, degrees (EPSG:4326 lon/lat), UTC timestamps, ISO dates |
 
@@ -208,8 +209,9 @@ COG: **band 1 = value** (median of points in the cell, NaN = no data),
 | code | meaning | what to do |
 |---|---|---|
 | 401 | missing or wrong `X-API-Key` | fix the header; don't retry otherwise |
+| 403 | the key is read-only | writes need a read/write key |
 | 404 | unknown region / job / raster | `POST /regions` first, or check the id |
-| 409 | slug is a configured region | use `region_slug` instead of `region` |
+| 409 | slug is a configured region, or registered by another owner | use `region_slug`, or pick another slug |
 | 422 | invalid request (body explains: missing `coord` for ATL13, bad `bbox`, unknown raster variable, `atl03` options on another product, …) | fix the body |
 | job `failed` | `error` names the exception and stage | `acquire`: SlideRule/network, retry later; `process` + "EGG2015": the area is outside Europe, use `vertical: "egm2008"`; anything else: report it |
 

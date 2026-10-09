@@ -1,0 +1,16 @@
+# Join the Docker network of an existing PostGIS container (e.g. the platform's
+# geoai-postgis-1), so CONTAINER_DATABASE_URL can name it directly:
+#   EXTERNAL_DB_NETWORK=geoai_default
+#   CONTAINER_DATABASE_URL=postgresql://icesat2:<pw>@geoai-postgis-1:5432/geohydro
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#                  -f docker-compose.external-db.yml up -d
+# (scripts/deploy_server.sh adds this file automatically when EXTERNAL_DB_NETWORK is set)
+services:
+  api:     {networks: [default, external_db]}
+  worker:  {networks: [default, external_db]}
+  migrate: {networks: [default, external_db]}
+
+networks:
+  external_db:
+    external: true
+    name: ${EXTERNAL_DB_NETWORK:?set EXTERNAL_DB_NETWORK to the network of the PostGIS container}
