@@ -1,0 +1,29 @@
+# Production overrides (Docker Compose >= 2.24 for !override):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Every port is bound to 127.0.0.1: put a TLS reverse proxy (Caddy/nginx) in front
+# of the API and never expose Postgres / S3 / Redis publicly. See docs/deployment.md.
+services:
+  db:
+    restart: unless-stopped
+    ports: !override ["127.0.0.1:55433:5432"]
+  s3:
+    restart: unless-stopped
+    ports: !override ["127.0.0.1:58333:8333"]
+  redis:
+    restart: unless-stopped
+    ports: !override ["127.0.0.1:56379:6379"]
+    volumes: [redisdata:/data]
+    command: ["redis-server", "--appendonly", "yes"]
+  api:
+    restart: unless-stopped
+    ports: !override ["127.0.0.1:58000:8000"]
+    command: ["uvicorn", "kakhovka_altimetry.service.api:app", "--host", "0.0.0.0",
+              "--port", "8000", "--workers", "2", "--proxy-headers",
+              "--forwarded-allow-ips", "*"]
+  worker:
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+
+volumes:
+  redisdata:

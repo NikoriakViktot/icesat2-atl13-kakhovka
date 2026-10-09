@@ -1,4 +1,24 @@
-# icesat2-atl13-kakhovka
+# icesat2-ingest
+
+*(formerly `icesat2-atl13-kakhovka`; old links redirect)*
+
+Two things live here, on one shared library (`src/kakhovka_altimetry/`):
+
+1. **ICESat-2 ingest service** for any region on Earth: ATL13 (inland water),
+   ATL08 (terrain + canopy), ATL03 (photons) via SlideRule; comparison with
+   Copernicus GLO-30 and FABDEM; ICESat-2 DTM / canopy / water-surface rasters as
+   COGs. Raw and processed data in S3, results in PostGIS, an HTTP API on top.
+   → [Ingest service](#ingest-service-any-region-atl13--atl08--atl03--dems) ·
+   [documentation](docs/README.md) · [API guide for AI agents](docs/agents-api.md) ·
+   [agent playbooks](docs/agent-playbooks.md) · [agent tools](docs/agent-tools.json) ·
+   [OpenAPI](docs/openapi.json) · [deployment](docs/deployment.md)
+2. **The Kakhovka research pipeline** (everything below until the service
+   section): ICESat-2 ATL13 → EGG2015 → per-pass water-surface elevation (EVRS) for
+   the Kakhovka reservoir, gauge alignment and datum work.
+
+Working on the code (people or agents): [AGENTS.md](AGENTS.md).
+
+---
 
 Reproducible pipeline: **ICESat-2 ATL13 → EGG2015 → per-pass water-surface
 elevation (EVRS)** for the Kakhovka reservoir.
@@ -350,43 +370,87 @@ downstream correctors.
 
 ## Out of scope
 
-- ATL03 photon reconstruction (`notebooks/_donor/` keeps the reference notebooks).
+- ATL03 photon reconstruction in the *research pipeline* (`notebooks/_donor/` keeps
+  the reference notebooks); the ingest service does pull ATL03 (see below).
 - Sentinel-2 / Dynamic World water masks — the AOI bbox is the V1 water filter
   (`data/Kakhovka_SA_2.geojson` stays disabled pending epoch confirmation).
 
-## Ingest service (API → S3 → PostGIS)
+## Ingest service: any region, ATL13 / ATL08 / ATL03, DEMs
 
-The same pipeline as a service: a request names a region and a date window, a
-worker pulls ATL13 through SlideRule, keeps the raw and processed parquet in S3
-and upserts segments + pass levels into PostGIS.
+A request names a **product**, an **area** and a **date window**. A worker finds
+the granules (curated list or NASA CMR), pulls them through SlideRule, keeps the
+raw and processed parquet in S3, converts heights, optionally compares them with
+reference DEMs and grids them into rasters, and upserts the results into PostGIS.
+
+| product | SlideRule | what you get |
+|---|---|---|
+| `ATL13` | `atl13x` | inland-water segments + per-pass water levels (QC'd for lakes/reservoirs) |
+| `ATL08` | `atl08x` | 100 m terrain (`h_te_median`) + canopy height segments; DTM / CHM rasters |
+| `ATL03` | `atl03x` | photons, filtered by confidence and ATL08 class; DTM raster (S3 only, not in PostGIS) |
+
+| DEMs | |
+|---|---|
+| reference: `cop30` | Copernicus GLO-30 DSM, read directly from AWS Open Data |
+| reference: `fabdem` | FABDEM V1-2 (bare earth; **CC BY-NC-SA 4.0, non-commercial**), tiles from Univ. of Bristol |
+| ICESat-2 rasters | median per cell in UTM at the requested resolution; band 2 = point count; COG in S3 |
+
+**Heights.** Every point keeps its ellipsoidal height and gets `H_m` in the region's
+`vertical`: `egm2008` (global, PROJ grid) or `egg2015` (Europe only, EVRS, the
+research pipeline's frame). It also always gets `H_egm2008_m`, the frame in which
+all DEM comparisons are done (`dh = H_egm2008 − DEM`).
 
 ```bash
-cp .env.example .env                       # set API_KEYS, S3 + Earthdata credentials
-docker compose up -d --build               # db, s3 (SeaweedFS), redis, api, worker
+cp .env.example .env                       # API_KEYS; S3 and (optional) Earthdata credentials
+docker compose --profile tools build       # all images, including `migrate`
+docker compose up -d                       # db, s3 (SeaweedFS), redis, api, worker
 docker compose run --rm migrate            # alembic upgrade head
-# EGG2015 into S3 once (path = EGG2015_URI in .env)
+# EGG2015 into S3 once (only for vertical=egg2015 regions; path = EGG2015_URI)
 python -c "import s3fs; s3fs.S3FileSystem().put('egg_2015.tif', 'icesat2/icesat2/reference/egg_2015.tif')"
 
-curl -X POST localhost:58000/jobs -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
-     -d '{"region_slug": "kakhovka", "start": "2019-04-01", "end": "2019-05-31", "limit": 5}'
-curl localhost:58000/jobs/<job_id> -H "X-API-Key: $KEY"
-curl "localhost:58000/regions/kakhovka/pass-levels?format=csv&qc_pass=true" -H "X-API-Key: $KEY"
+K="X-API-Key: $KEY"
+# water levels of any lake (ad-hoc region, registered on the fly)
+curl -X POST localhost:58000/jobs -H "$K" -H 'Content-Type: application/json' -d '{
+  "product": "ATL13", "start": "2023-01-01", "end": "2023-02-28",
+  "region": {"slug": "lake_victoria_sw", "coord": {"lon": 33.0, "lat": -1.0},
+             "bbox": [32.5, -1.5, 33.5, -0.5]}}'
+# terrain + canopy, validated against both DEMs, gridded at 100 m
+curl -X POST localhost:58000/jobs -H "$K" -H 'Content-Type: application/json' -d '{
+  "product": "ATL08", "start": "2021-05-01", "end": "2021-07-31",
+  "region": {"slug": "nova_kakhovka_land", "bbox": [33.30, 46.70, 33.45, 46.80]},
+  "compare": ["cop30", "fabdem"], "dem": {"resolution_m": 100}}'
+curl localhost:58000/jobs/<job_id> -H "$K"                 # poll until done
 ```
 
 | endpoint | does |
 |---|---|
-| `POST /jobs` | `region_slug` (configured) **or** `region` (ad-hoc refid + coord + bbox/polygon), `start`, `end`, `include_cmr`, `limit`, `batch_size` → `202 {job_id}` |
-| `GET /jobs/{id}`, `GET /jobs` | status per stage (discover → acquire → process → load) and counts |
-| `GET /regions` | configured regions + row counts in PostGIS |
-| `GET /regions/{slug}/pass-levels` | GeoJSON (track LineStrings) or `format=csv`; `start`, `end`, `qc_pass` |
-| `GET /granules` | per-granule status: `pending`/`fetched`/`empty`/`loaded` |
+| `GET /products` | products, raster variables, reference DEMs |
+| `POST /regions`, `GET /regions`, `GET /regions/{slug}` | register / list areas (bbox or GeoJSON polygon; `coord` on the water for ATL13) |
+| `POST /jobs` | `product`, `region_slug` **or** inline `region`, `start`, `end`, `limit`, `compare`, `dem`, `atl03` → `202 {job_id}` |
+| `GET /jobs/{id}`, `GET /jobs` | stage (discover → acquire → process → load), stats, error |
+| `GET /regions/{slug}/pass-levels` | ATL13 levels: GeoJSON (track lines) or CSV |
+| `GET /regions/{slug}/points` | ATL13 / ATL08 points: CSV or JSON |
+| `GET /dem-comparisons` | ICESat-2 − DEM statistics per job (median, NMAD, RMSE, …) |
+| `GET /rasters`, `GET /rasters/{id}`, `GET /rasters/{id}/download` | raster registry and the COG itself |
+| `GET /granules` | per-granule status: `pending` / `fetched` / `empty` / `loaded` |
 
-Granules already `loaded`/`empty` are skipped, so a repeated job only pulls new
-passes; every load is an upsert on `(region, beam, time)` / `(region, date, rgt, beam)`.
-S3 layout and schema: `src/kakhovka_altimetry/service/storage.py`,
-`migrations/versions/0001_icesat2_schema.py`. Without docker:
-`python -m kakhovka_altimetry.service.worker --region kakhovka --limit 5`.
+On a server: `scripts/deploy_server.sh user@host` ([docs/deployment.md](docs/deployment.md)).
 
-Verified against the batch pipeline on real data (10 granules, Apr–May 2019): all
-46 passes match `outputs/tables/atl13_pass_levels.csv` (|Δ median WSE| ≤ 2 µm,
-identical `n_points` and `qc_pass`).
+Granules already `loaded` / `empty` are skipped, so a repeated job only pulls new
+passes, and every load is an upsert. Without docker:
+`python -m kakhovka_altimetry.service.worker --region kakhovka --product ATL13 --limit 5`.
+Full documentation: [docs/](docs/README.md): architecture, data model, heights and
+DEMs, deployment, operations, and the agent guide, playbooks and tool definitions.
+
+**Verified on real data** (live SlideRule, this stack):
+
+| check | result |
+|---|---|
+| ATL13 Kakhovka vs the batch pipeline, 10 granules Apr–May 2019 | all 46 passes match `outputs/tables/atl13_pass_levels.csv`, \|Δ\| ≤ 2 µm, same `n_points` / `qc_pass` |
+| ATL13 Lake Victoria (EGM2008), Jan–Feb 2023 | 87 413 segments, 27 passes (22 QC), WSE ≈ 1135.4–1135.6 m |
+| ATL08 farmland S of Nova Kakhovka − DEM | COP30 −0.44 m (NMAD 0.84), FABDEM −0.29 m (NMAD 0.58) |
+| ATL03 ground photons there − FABDEM | 67 580 photons, median 0.00 m (NMAD 1.05); 30 m DTM median 16.97 m ≈ ATL08 DTM 16.85 m |
+
+Attribution: ICESat-2 (NASA NSIDC), SlideRule (University of Washington / NASA),
+Copernicus GLO-30 (© DLR e.V. 2010–2014 and © Airbus Defence and Space GmbH
+2014–2018, provided under COPERNICUS by the EU and ESA), FABDEM V1-2 (University of
+Bristol / Fathom, CC BY-NC-SA 4.0).

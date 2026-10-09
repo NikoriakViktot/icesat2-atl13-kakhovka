@@ -1,6 +1,7 @@
-"""The ATL13 pipeline as pure steps, independent of where the data lives.
+"""The ICESat-2 pipeline as pure steps, independent of where the data lives.
 
-    candidate_granules -> fetch_batch -> segments_from_raw -> to_evrs -> pass_levels
+    candidate_granules -> fetch_batch -> segments_from_raw -> to_heights
+        -> pass_levels (ATL13) | reference-DEM comparison | rasters
 
 The batch scripts (``scripts/download_atl13*.py``, ``build_evrs.py``,
 ``build_pass_levels.py``) and the service worker both call these; only the
@@ -15,12 +16,15 @@ from collections.abc import Iterable
 import numpy as np
 import pandas as pd
 
-from . import atl13
+from . import heights, products
 from .aggregate import mad, nmad, pass_level_table
 from .config import Config
 from .discovery import GranuleInfo, cmr_granules
-from .regions import RESERVOIR, Region
+from .products import Product
+from .regions import EGG2015, PERIOD_ALL, Region
 from .vertical import GeoidGrid, add_evrs_columns
+
+ATL13 = products.PRODUCTS["ATL13"]
 
 BASIC_PASS_LEVEL_COLUMNS = [
     "date", "datetime", "year", "rgt", "beam", "period", "n_points",
@@ -28,18 +32,24 @@ BASIC_PASS_LEVEL_COLUMNS = [
     "p05_m", "p95_m", "range_m", "lat_mean", "lon_mean",
 ]
 
+# library pass-level names -> datum-neutral names used by the service
+GENERIC_WSE_COLUMNS = {"median_wse_evrs_m": "median_wse_m", "mean_wse_evrs_m": "mean_wse_m"}
+
 
 # --------------------------------------------------------------------------- #
 # Discovery                                                                    #
 # --------------------------------------------------------------------------- #
 def select_granules(
-    names: Iterable[str], start: dt.date | None = None, end: dt.date | None = None
+    names: Iterable[str], start: dt.date | None = None, end: dt.date | None = None,
+    *, product: str | None = None,
 ) -> list[str]:
     """Granules whose acquisition date lies in ``[start, end]``, oldest first."""
     infos = sorted((GranuleInfo.parse(n) for n in set(names)),
                    key=lambda i: i.acquisition_time)
     out = []
     for info in infos:
+        if product is not None and info.product != product:
+            continue
         d = info.acquisition_time.date()
         if start is not None and d < start:
             continue
@@ -56,27 +66,40 @@ def candidate_granules(
     end: dt.date | None = None,
     *,
     include_cmr: bool = False,
+    product: Product = ATL13,
 ) -> list[str]:
-    """The region's curated seed list, optionally merged with a live CMR search."""
-    names = set(region.seed_granules())
+    """The region's curated seed list (ATL13), optionally merged with a CMR search."""
+    names = set(region.seed_granules()) if product.name == "ATL13" else set()
     if include_cmr:
         names |= set(cmr_granules(
             region.search_bbox,
             start or cfg.product.start_date,
             end or dt.date.today(),
-            short_name=cfg.product.short_name,
-            version=cfg.product.version,
+            short_name=product.name,
+            version=product.version,
         ))
-    return select_granules(names, start, end)
+    return select_granules(names, start, end, product=product.name)
 
 
 # --------------------------------------------------------------------------- #
 # Acquisition                                                                  #
 # --------------------------------------------------------------------------- #
-def fetch_batch(cfg: Config, region: Region, granules: list[str]):
-    """One SlideRule ``atl13x`` request for ``granules`` over ``region``."""
-    parms = atl13.build_parms_for(region.refid, region.coord_lon, region.coord_lat, granules)
-    return atl13.run_atl13x(cfg, granules, parms=parms)
+def run_sliderule(cfg: Config, api: str, parms: dict):
+    """One SlideRule ``x`` request -> GeoDataFrame."""
+    from sliderule import sliderule
+
+    init_kw = {}
+    if cfg.atl13x.organization:
+        init_kw["organization"] = cfg.atl13x.organization
+    sliderule.init(cfg.atl13x.domain, **init_kw)
+    return sliderule.run(api, parms)
+
+
+def fetch_batch(cfg: Config, region: Region, granules: list[str], *,
+                product: Product = ATL13, options: dict | None = None):
+    """One SlideRule request for ``granules`` over ``region``."""
+    parms = products.request_parms(product, region, granules, options)
+    return run_sliderule(cfg, product.api, parms)
 
 
 def granule_lookup(granules: Iterable[str]) -> dict[tuple[int, int], str]:
@@ -88,9 +111,9 @@ def granule_lookup(granules: Iterable[str]) -> dict[tuple[int, int], str]:
     return out
 
 
-def segments_from_raw(raw, granules: Iterable[str]) -> pd.DataFrame:
+def segments_from_raw(raw, granules: Iterable[str], *, product: Product = ATL13) -> pd.DataFrame:
     """Normalise a raw SlideRule frame and attach the granule name via (rgt, cycle)."""
-    seg = atl13.normalise(raw)
+    seg = products.normalise(product, raw)
     gmap = granule_lookup(granules)
     seg["granule"] = [
         gmap.get((int(r), int(c))) if pd.notna(r) and pd.notna(c) else None
@@ -103,9 +126,11 @@ def segments_from_raw(raw, granules: Iterable[str]) -> pd.DataFrame:
 # Processing                                                                   #
 # --------------------------------------------------------------------------- #
 def within(df: pd.DataFrame, geom) -> np.ndarray:
-    """Boolean mask: segment (lon, lat) falls inside ``geom``."""
+    """Boolean mask: point (lon, lat) falls inside ``geom``."""
     import geopandas as gpd
 
+    if len(df) == 0:
+        return np.zeros(0, bool)
     pts = gpd.GeoSeries(
         gpd.points_from_xy(df["lon"].astype(float), df["lat"].astype(float)),
         crs="EPSG:4326",
@@ -113,31 +138,69 @@ def within(df: pd.DataFrame, geom) -> np.ndarray:
     return pts.within(geom).to_numpy()
 
 
+def to_heights(
+    seg: pd.DataFrame, cfg: Config, region: Region, *, product: Product = ATL13,
+    geoid: GeoidGrid | None = None,
+) -> pd.DataFrame:
+    """Clip flag + orthometric heights + period for any product.
+
+    ATL13 keeps every segment with ``water_mask_pass`` (inside the clip); ATL08 /
+    ATL03 drop points outside the clip (SlideRule cut them with a convex hull).
+    ATL13 over an ``egg2015`` region also gets the reservoir pipeline's EVRS columns
+    (``zeta_egg2015_m``, ``H_evrs_egg2015_m``, ``egm2008_minus_evrs_m``).
+    """
+    df = seg.copy()
+    inside = within(df, region.clip_geometry())
+    if product.name == "ATL13":
+        df["water_mask_pass"] = inside
+        if region.vertical == EGG2015:
+            df = add_evrs_columns(df, cfg, geoid=geoid)
+    else:
+        df = df[inside].reset_index(drop=True)
+    df = heights.add_heights(
+        df, product.height_col, region.vertical, geoid=geoid,
+        egm2008_col="H_egm2008_m" if product.name == "ATL13" else None,
+    )
+    if region.regimes:
+        dates = pd.to_datetime(df["time"], utc=True).dt.date
+        df["period"] = [cfg.regimes.label_for(d) for d in dates]
+    else:
+        df["period"] = PERIOD_ALL
+    return df
+
+
 def to_evrs(
     segments: pd.DataFrame, cfg: Config, region: Region, *, geoid: GeoidGrid | None = None
 ) -> pd.DataFrame:
-    """Segments + ``water_mask_pass`` (inside the region clip) + the EVRS columns."""
-    df = segments.copy()
-    df["water_mask_pass"] = within(df, region.clip_geometry()) if len(df) else []
-    return add_evrs_columns(df, cfg, geoid=geoid)
+    """ATL13 segments + ``water_mask_pass`` + heights (the reservoir pipeline's step)."""
+    return to_heights(segments, cfg, region, product=ATL13, geoid=geoid)
 
 
 def pass_levels(evrs: pd.DataFrame, cfg: Config, region: Region) -> pd.DataFrame:
-    """One level per (date, rgt, beam): full QC for a reservoir, basic stats otherwise."""
-    if region.kind == RESERVOIR:
-        return pass_level_table(evrs, cfg)
-    return basic_pass_levels(evrs, region.clip_geometry())
+    """ATL13: one level per (date, rgt, beam) of ``H_m`` in the region's datum.
+
+    Still water (lake / reservoir) gets the full QC; rivers basic statistics. Columns
+    use datum-neutral names (``median_wse_m``, ``mean_wse_m``) + ``vertical_datum``.
+    """
+    if region.still_water:
+        out = pass_level_table(evrs, cfg, height_col="H_m")
+    else:
+        out = basic_pass_levels(evrs, region.clip_geometry(), height_col="H_m")
+    out = out.rename(columns=GENERIC_WSE_COLUMNS)
+    out["vertical_datum"] = region.vertical_datum
+    return out
 
 
-def basic_pass_levels(evrs: pd.DataFrame, geom) -> pd.DataFrame:
+def basic_pass_levels(evrs: pd.DataFrame, geom, *,
+                      height_col: str = "H_evrs_egg2015_m") -> pd.DataFrame:
     """Per-pass statistics inside ``geom`` without the reservoir QC gates."""
     df = evrs.copy()
     df["time"] = pd.to_datetime(df["time"], utc=True)
     df["date"] = df["time"].dt.date
-    df = df[np.isfinite(df["H_evrs_egg2015_m"]) & within(df, geom)]
+    df = df[np.isfinite(df[height_col]) & within(df, geom)]
     rows = []
     for (date, rgt, beam), g in df.groupby(["date", "rgt", "beam"], dropna=False):
-        h = g["H_evrs_egg2015_m"].to_numpy(float)
+        h = g[height_col].to_numpy(float)
         p05, p95 = np.percentile(h, [5, 95])
         rows.append({
             "date": date, "datetime": g["time"].min(),
@@ -152,3 +215,10 @@ def basic_pass_levels(evrs: pd.DataFrame, geom) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame(columns=BASIC_PASS_LEVEL_COLUMNS)
     return pd.DataFrame(rows).sort_values("datetime").reset_index(drop=True)
+
+
+def dem_mask(df: pd.DataFrame, product: Product) -> np.ndarray:
+    """Points that enter DEM statistics/rasters (ATL13: on-water segments only)."""
+    if product.name == "ATL13" and "water_mask_pass" in df:
+        return df["water_mask_pass"].to_numpy(bool)
+    return np.ones(len(df), bool)

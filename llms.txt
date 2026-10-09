@@ -1,0 +1,26 @@
+# icesat2-ingest
+
+> ICESat-2 ingest service and research pipeline. Pulls ATL13 (inland water),
+> ATL08 (terrain + canopy) and ATL03 (photons) for any region via SlideRule,
+> compares them with Copernicus GLO-30 and FABDEM, grids them into COG rasters,
+> and stores raw/processed data in S3 and results in PostGIS. Also contains the
+> Kakhovka reservoir ATL13 -> EGG2015 -> EVRS research pipeline.
+
+## Using the API (agents calling the service)
+- [API guide for AI agents](docs/agents-api.md): workflow, request fields, polling, errors, output semantics
+- [Agent playbooks](docs/agent-playbooks.md): recipes (water levels, DEM validation, DTM/CHM rasters), sanity checks, system-prompt template
+- [Agent tool definitions](docs/agent-tools.json): JSON Schema tools with HTTP mapping, ready for LLM tool use
+- [OpenAPI contract](docs/openapi.json): machine-readable schema of every endpoint
+
+## Understanding the data
+- [Data model](docs/data-model.md): every table, column, unit, datum and S3 path
+- [Heights and DEMs](docs/heights-and-dems.md): EGM2008 / EGG2015, Copernicus and FABDEM, comparison method, rasters
+- [Architecture](docs/architecture.md): components and the job lifecycle
+
+## Running it
+- [Deployment](docs/deployment.md): server requirements, one-command deploy, .env, TLS proxy, AWS S3
+- [Operations](docs/operations.md): jobs, SQL, troubleshooting, backups
+
+## Working on the code (coding agents)
+- [AGENTS.md](AGENTS.md): layout, commands, invariants, gotchas, how to add a product
+- [README](README.md): the research pipeline (vertical datums, periods, phases) and service quick start

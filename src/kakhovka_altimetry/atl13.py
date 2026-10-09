@@ -84,13 +84,18 @@ def run_atl13x(cfg: Config, resources: list[str], *, parms: dict | None = None):
     return sliderule.run("atl13x", request)
 
 
-def build_parms_for(refid: int, lon: float, lat: float, resources: list[str]) -> dict[str, Any]:
-    """``atl13x`` request parameters for an arbitrary reference water body."""
-    return {
-        "atl13": {"refid": int(refid), "coord": {"lon": float(lon), "lat": float(lat)}},
-        "locks": 1,
-        "resources": list(resources),
-    }
+def build_parms_for(
+    refid: int | None, lon: float, lat: float, resources: list[str]
+) -> dict[str, Any]:
+    """``atl13x`` request parameters for an arbitrary water body.
+
+    ``coord`` alone is enough: SlideRule resolves the ATL13 reference water body
+    that contains it (verified to return the same rows as ``refid`` + ``coord``).
+    """
+    sel: dict[str, Any] = {"coord": {"lon": float(lon), "lat": float(lat)}}
+    if refid is not None:
+        sel["refid"] = int(refid)
+    return {"atl13": sel, "locks": 1, "resources": list(resources)}
 
 
 def raw_frame(gdf) -> pd.DataFrame:
