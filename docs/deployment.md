@@ -110,6 +110,7 @@ curl -fsS http://127.0.0.1:58000/health
 | `SEAWEED_S3_CONFIG` | `./docker/seaweedfs-s3.json` | SeaweedFS identities file (deploy script: `docker/seaweedfs-s3.local.json`) |
 | `REDIS_URL` | localhost:56379 | host-side; containers use `redis://redis:6379/0` |
 | `JOB_RUNNER` | `rq` | `inline` runs jobs inside the API process (tests only) |
+| `WORKER_REPLICAS` | 2 | RQ workers in production; 1 on a 2 vCPU host |
 | `BATCH_SIZE`, `FETCH_RETRIES` | 50, 3 | defaults when a job does not set them |
 | `CACHE_DIR` | `/tmp/icesat2-cache` | worker cache (geoid grid, DEM tiles, PROJ grid); a volume in compose |
 | `EARTHDATA_USERNAME`, `EARTHDATA_PASSWORD` | — | optional; only for the earthaccess CMR fallback |
@@ -164,6 +165,13 @@ policy needs `s3:GetObject`, `PutObject`, `DeleteObject`, `ListBucket` on the bu
 external network as `icesat2-api`, so e.g. Django on it uses `ICESAT2_API_URL=http://icesat2-api:8000`
 with its own `django:<key>` from `API_KEYS` (send only the key part in `X-API-Key`). The worker,
 Redis and the database stay off that network.
+
+Compose registers service names (`api`, `worker`, `migrate`) as DNS aliases on every network a
+service joins. Never join a network that already has a service with one of those names: on
+geohydroai.org, `geoai_web` has the site's own `api`, and nginx would start sending its traffic
+here. There the service uses the Django platform's PostGIS instead
+(`EXTERNAL_DB_NETWORK=geohydroai-platform_default`, database `platform`, schema `icesat2`), and
+Django reaches the API on that network by container name: `http://icesat2-ingest-api-1:8000`.
 
 ## Updating
 
