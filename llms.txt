@@ -1,0 +1,15 @@
+# icesat2-atl13-kakhovka
+
+> ICESat-2 ingest service and research pipeline. Pulls ATL13 (inland water),
+> ATL08 (terrain + canopy) and ATL03 (photons) for any region via SlideRule,
+> compares them with Copernicus GLO-30 and FABDEM, grids them into COG rasters,
+> and stores raw/processed data in S3 and results in PostGIS. Also contains the
+> Kakhovka reservoir ATL13 -> EGG2015 -> EVRS research pipeline.
+
+## Using the API (agents calling the service)
+- [API guide for AI agents](docs/agents-api.md): workflow, request fields, polling, errors, output semantics
+- [OpenAPI contract](docs/openapi.json): machine-readable schema of every endpoint
+
+## Working on the code (coding agents)
+- [AGENTS.md](AGENTS.md): layout, commands, invariants, gotchas, how to add a product
+- [README](README.md): the research pipeline (vertical datums, periods, phases) and service quick start

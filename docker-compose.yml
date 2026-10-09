@@ -61,6 +61,9 @@ services:
       DATABASE_URL: postgresql://icesat2:${POSTGRES_PASSWORD:-icesat2}@db:5432/icesat2
       AWS_ENDPOINT_URL: http://s3:8333
       REDIS_URL: redis://redis:6379/0
+      # EGM2008 geoid grid for ATL08/ATL03 heights, fetched from the PROJ CDN once
+      PROJ_NETWORK: "ON"
+      PROJ_USER_WRITABLE_DIRECTORY: /tmp/icesat2-cache/proj
     depends_on: {db: {condition: service_healthy}}
     profiles: [tools]
 

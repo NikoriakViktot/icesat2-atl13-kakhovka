@@ -93,8 +93,14 @@ def along_track_slope(
     return slope, length
 
 
-def pass_level_table(evrs: pd.DataFrame, cfg: Config) -> pd.DataFrame:
-    """Aggregate the EVRS segment table into the pass-level table."""
+def pass_level_table(
+    evrs: pd.DataFrame, cfg: Config, *, height_col: str = "H_evrs_egg2015_m"
+) -> pd.DataFrame:
+    """Aggregate the EVRS segment table into the pass-level table.
+
+    ``height_col`` is the height that is aggregated; the output keeps the
+    ``*_wse_evrs_m`` column names whatever it is (the service renames them).
+    """
     df = evrs.copy()
     df["time"] = pd.to_datetime(df["time"], utc=True)
 
@@ -108,13 +114,13 @@ def pass_level_table(evrs: pd.DataFrame, cfg: Config) -> pd.DataFrame:
     df["date"] = df["time"].dt.normalize()
     rows: list[dict] = []
     for (date, rgt, beam), grp in df.groupby(["date", "rgt", "beam"], dropna=False):
-        h = grp["H_evrs_egg2015_m"].to_numpy(float)
+        h = grp[height_col].to_numpy(float)
         h = h[np.isfinite(h)]
         if h.size == 0:
             continue
         slope, length = along_track_slope(
             grp["lat"].to_numpy(float), grp["lon"].to_numpy(float),
-            grp["H_evrs_egg2015_m"].to_numpy(float),
+            grp[height_col].to_numpy(float),
         )
         rgt_i = _maybe_int(rgt)
         period = (

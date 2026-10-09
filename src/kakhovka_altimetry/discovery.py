@@ -22,9 +22,9 @@ import pandas as pd
 
 from .config import Config
 
-# ATL13_<yyyymmddhhmmss>_<RGT4><CC2><RR2>_<release3>_<version2>.h5
+# ATLxx_<yyyymmddhhmmss>_<RGT4><CC2><RR2>_<release3>_<version2>.h5  (ATL03/06/08/13 ...)
 _GRANULE_RE = re.compile(
-    r"^ATL13_(?P<ts>\d{14})_(?P<rgt>\d{4})(?P<cycle>\d{2})(?P<region>\d{2})_"
+    r"^(?P<product>ATL\d{2})_(?P<ts>\d{14})_(?P<rgt>\d{4})(?P<cycle>\d{2})(?P<region>\d{2})_"
     r"(?P<release>\d{3})_(?P<version>\d{2})\.h5$"
 )
 
@@ -51,13 +51,14 @@ class GranuleInfo:
     region: int
     release: str
     version: str
+    product: str = "ATL13"
 
     @classmethod
     def parse(cls, name: str) -> GranuleInfo:
         name = name.strip()
         m = _GRANULE_RE.match(name)
         if not m:
-            raise ValueError(f"not an ATL13 granule filename: {name!r}")
+            raise ValueError(f"not an ICESat-2 granule filename: {name!r}")
         return cls(
             granule=name,
             acquisition_time=dt.datetime.strptime(m["ts"], "%Y%m%d%H%M%S").replace(
@@ -68,6 +69,7 @@ class GranuleInfo:
             region=int(m["region"]),
             release=m["release"],
             version=m["version"],
+            product=m["product"],
         )
 
 
@@ -106,7 +108,37 @@ def cmr_granules(
     short_name: str = "ATL13",
     version: str = "007",
 ) -> list[str]:
-    """CMR search for granules intersecting ``bbox`` in ``[start, end]``."""
+    """CMR search for granules intersecting ``bbox`` in ``[start, end]``.
+
+    Goes through SlideRule's CMR proxy first (no Earthdata Login needed); falls back
+    to ``earthaccess`` (needs ``EARTHDATA_USERNAME`` / ``EARTHDATA_PASSWORD``).
+    """
+    try:
+        return _cmr_via_sliderule(bbox, start, end, short_name=short_name, version=version)
+    except Exception as exc:  # noqa: BLE001 - fall back to the Earthdata route
+        import logging
+
+        logging.getLogger(__name__).warning("SlideRule CMR search failed (%s); "
+                                            "falling back to earthaccess", exc)
+    return _cmr_via_earthaccess(bbox, start, end, short_name=short_name, version=version)
+
+
+def _cmr_via_sliderule(bbox, start, end, *, short_name, version) -> list[str]:
+    from sliderule import earthdata
+
+    lon_min, lat_min, lon_max, lat_max = bbox
+    # counter-clockwise ring, first point repeated (SlideRule polygon convention)
+    poly = [{"lon": lon_min, "lat": lat_min}, {"lon": lon_max, "lat": lat_min},
+            {"lon": lon_max, "lat": lat_max}, {"lon": lon_min, "lat": lat_max},
+            {"lon": lon_min, "lat": lat_min}]
+    names = earthdata.cmr(
+        short_name=short_name, version=version, polygon=poly,
+        time_start=f"{start.isoformat()}T00:00:00Z", time_end=f"{end.isoformat()}T23:59:59Z",
+    )
+    return sorted({n for n in names if n.startswith(f"{short_name}_") and n.endswith(".h5")})
+
+
+def _cmr_via_earthaccess(bbox, start, end, *, short_name, version) -> list[str]:
     try:
         import earthaccess
     except ImportError as exc:  # pragma: no cover - env dependent
